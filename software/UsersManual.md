@@ -117,6 +117,7 @@ Topics are prefixed with the name defined as `Clock name` in the web UI settings
 - `wordclock/light/color` -> current color (in `r,g,b` format)
 - `wordclock/light/switch` -> current state of the display `ON` or `OFF`
 - `wordclock/light/limit` -> current LED current budget in mA (not retained)
+- `wordclock/light/effect` -> current lighting effect (not retained)
 - `wordclock/diag/reset_reason` -> reason of the last reset (`POWERON`, `SOFTWARE`, `BROWNOUT`, `PANIC`, `TASK_WATCHDOG`...), refreshes every 15 seconds (not retained)
 - `wordclock/diag/uptime` -> seconds since boot, refreshes every 15 seconds (not retained)
 
@@ -124,6 +125,11 @@ Topics are prefixed with the name defined as `Clock name` in the web UI settings
 - `wordclock/light/color/set` -> sets the LED color, payload must be an `r,g,b` formatted string
 - `wordclock/light/switch/set` -> send `ON` or `OFF` to toggle the display (with a fade effect). The previously set color is restored on `ON`.
 - `wordclock/light/limit/set` -> sets the LED current budget in mA (50-3000), saved across reboots. Frames estimated above it are dimmed proportionally. The default comes from the `LED_MAX_MILLIAMPS` build flag.
+- `wordclock/light/effect/set` -> sets the lighting effect of the lit letters, saved across reboots. The time stays readable and the brightness of the chosen color is kept:
+  - `none`: plain color
+  - `rainbow`: a rainbow wave moving across the columns
+  - `colorloop`: all letters slowly cycle through the hues (one minute per cycle)
+  - `breathe`: the chosen color slowly pulses between 25% and 100%
 
 #### Matrix paint (experimental)
 - `wordclock/light/matrix/set` -> activates Paint mode and displays the payload, a 110 characters string using a preset palette, see [Paint](#paint)
@@ -145,6 +151,9 @@ mqtt:
         command_topic: "wordclock/light/switch/set"
         rgb_state_topic: "wordclock/light/color"
         rgb_command_topic: "wordclock/light/color/set"
+        effect_state_topic: "wordclock/light/effect"
+        effect_command_topic: "wordclock/light/effect/set"
+        effect_list: ["none", "rainbow", "colorloop", "breathe"]
         qos: 0
         optimistic: false
   sensor:

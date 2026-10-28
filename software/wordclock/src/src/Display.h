@@ -22,6 +22,9 @@
 #define LED_MAX_MILLIAMPS 1500
 #endif
 
+// Frame interval of the lighting effects, in ms.
+#define EFFECT_FRAME_INTERVAL 40
+
 // Typical WS2812 draw for one color channel at full duty, in mA.
 #ifndef LED_CHANNEL_MILLIAMPS
 #define LED_CHANNEL_MILLIAMPS 20
@@ -67,6 +70,20 @@ public:
   };
   Mode getMode() { return _mode; }
 
+  // Lighting effects applied to the lit letters. The time stays readable.
+  enum Effect {
+    EFFECT_NONE,
+    EFFECT_RAINBOW,   // Hue wave moving across the columns.
+    EFFECT_COLORLOOP, // All letters slowly cycle through the hues.
+    EFFECT_BREATHE,   // The color slowly pulses between 25% and 100%.
+    EFFECT_COUNT
+  };
+  void setEffect(Effect effect);
+  Effect getEffect() { return _effect; }
+  static const char *effectName(Effect effect);
+  // Returns EFFECT_COUNT for an unknown name.
+  static Effect effectFromName(const String &name);
+
   // Current budget for the LEDs, in mA.
   void setMaxMilliamps(uint16_t milliamps);
   uint16_t getMaxMilliamps() { return _maxMilliamps; }
@@ -74,6 +91,15 @@ public:
 private:
   // Sends the pixels to the LEDs, dimmed to stay within _maxMilliamps.
   void _show();
+
+  // Fills _pixelColumn for the current clock face.
+  void _mapColumns();
+
+  // Color of a lit pixel, with the current effect applied.
+  RgbColor _litColor(uint16_t index);
+
+  // Recolors the lit pixels for the current effect frame.
+  void _renderEffect();
 
   // Updates pixel color on the display.
   void _update(int animationSpeed = TIME_CHANGE_ANIMATION_SPEED);
@@ -91,6 +117,11 @@ private:
   
   // Current budget for the LEDs, in mA.
   uint16_t _maxMilliamps = LED_MAX_MILLIAMPS;
+
+  Effect _effect = EFFECT_NONE;
+  unsigned long _effectFrameMs = 0;
+  // Horizontal position of each pixel, from 0 (left) to 1 (right).
+  std::vector<float> _pixelColumn;
 
   // Whether the display should show AM/PM information.
   bool _show_ampm = 0;

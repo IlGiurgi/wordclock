@@ -42,6 +42,7 @@
 // IotWebConf configuration so CONFIG_VERSION does not change.
 #define PREFS_NAMESPACE "wordclock"
 #define PREFS_LED_LIMIT_KEY "led_ma"
+#define PREFS_EFFECT_KEY "effect"
 // Max accepted lenghth of text to scroll.
 #define TICKER_MAX_LENGTH 200
 // Versioning pulled from git by versioning.py script.
@@ -336,6 +337,7 @@ void Iot::setup()
   Preferences prefs;
   prefs.begin(PREFS_NAMESPACE, true /* readOnly */);
   display_->setMaxMilliamps(prefs.getUShort(PREFS_LED_LIMIT_KEY, LED_MAX_MILLIAMPS));
+  display_->setEffect(static_cast<Display::Effect>(prefs.getUChar(PREFS_EFFECT_KEY, Display::EFFECT_NONE)));
   prefs.end();
 
   this->show_ampm_value_[0] = '\0';
@@ -716,6 +718,7 @@ bool Iot::connectMQTT_()
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/light/matrix/unset");
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/light/text/set");
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/light/limit/set");
+  mqtt_client_.subscribe(mqtt_topic_prefix_ + "/light/effect/set");
 
   // Update availability.
   mqtt_client_.publish(mqtt_topic_prefix_ + "/availability", "online", true /* retained */, 0 /* QoS */);
@@ -729,6 +732,10 @@ bool Iot::connectMQTT_()
   mqtt_client_.publish(
       mqtt_topic_prefix_ + "/light/limit",
       String(display_->getMaxMilliamps()), false /* retained */, 0 /* QoS */);
+  // Publish current lighting effect.
+  mqtt_client_.publish(
+      mqtt_topic_prefix_ + "/light/effect",
+      Display::effectName(display_->getEffect()), false /* retained */, 0 /* QoS */);
 
   return true;
 }
@@ -816,6 +823,21 @@ void Iot::mqttMessageReceived_(String &topic, String &payload)
     mqtt_client_.publish(
         mqtt_topic_prefix_ + "/light/limit",
         String(display_->getMaxMilliamps()), false /* retained */, 0 /* QoS */);
+  }
+  else if (topic == mqtt_topic_prefix_ + "/light/effect/set")
+  {
+    Display::Effect effect = Display::effectFromName(payload);
+    if (effect != Display::EFFECT_COUNT && effect != display_->getEffect())
+    {
+      display_->setEffect(effect);
+      Preferences prefs;
+      prefs.begin(PREFS_NAMESPACE, false /* readOnly */);
+      prefs.putUChar(PREFS_EFFECT_KEY, effect);
+      prefs.end();
+    }
+    mqtt_client_.publish(
+        mqtt_topic_prefix_ + "/light/effect",
+        Display::effectName(display_->getEffect()), false /* retained */, 0 /* QoS */);
   }
   else if (topic == mqtt_topic_prefix_ + "/light/text/set")
   {

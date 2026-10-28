@@ -16,6 +16,7 @@ void Display::setup()
   _mode = CLOCK;
   _pixels.Begin();
   _brightnessController.setup();
+  _mapColumns();
 }
 
 void Display::loop()
@@ -48,6 +49,12 @@ void Display::loop()
       }
   } else {
     _animations.UpdateAnimations();
+    if (_effect != EFFECT_NONE && !_off && !_animations.IsAnimating() &&
+        millis() - _effectFrameMs >= EFFECT_FRAME_INTERVAL)
+    {
+      _effectFrameMs = millis();
+      _renderEffect();
+    }
     if (!_off && _brightnessController.hasChanged())
     {
       DLOGLN("Brightness has changed, updating");
@@ -111,6 +118,7 @@ void Display::setClockFace(ClockFace* clockface)
 {
   DLOGLN("Updating clockface");
   _clockFace = clockface;
+  _mapColumns();
   _update();
 }
 
@@ -145,7 +153,7 @@ void Display::_update(int animationSpeed)
   for (int index = 0; index < state.size(); index++)
   {
     RgbColor originalColor = _pixels.GetPixelColor(index);
-    RgbColor targetColor = _off ? black : (state[index] ? _brightnessController.getCorrectedColor() : black);
+    RgbColor targetColor = _off ? black : (state[index] ? _litColor(index) : black);
 
     AnimUpdateCallback animUpdate = [=](const AnimationParam &param) {
       float progress = NeoEase::QuadraticIn(param.progress);
@@ -154,6 +162,98 @@ void Display::_update(int animationSpeed)
       _pixels.SetPixelColor(index, updatedColor);
     };
     _animations.StartAnimation(index, animationSpeed, animUpdate);
+  }
+}
+
+const char *Display::effectName(Effect effect)
+{
+  switch (effect)
+  {
+  case EFFECT_RAINBOW:
+    return "rainbow";
+  case EFFECT_COLORLOOP:
+    return "colorloop";
+  case EFFECT_BREATHE:
+    return "breathe";
+  default:
+    return "none";
+  }
+}
+
+Display::Effect Display::effectFromName(const String &name)
+{
+  for (int effect = EFFECT_NONE; effect < EFFECT_COUNT; effect++)
+  {
+    if (name.equalsIgnoreCase(effectName(static_cast<Effect>(effect))))
+    {
+      return static_cast<Effect>(effect);
+    }
+  }
+  return EFFECT_COUNT;
+}
+
+void Display::setEffect(Effect effect)
+{
+  if (effect >= EFFECT_COUNT || effect == _effect)
+  {
+    return;
+  }
+  DLOG("Effect: ");
+  DLOGLN(effectName(effect));
+  _effect = effect;
+  _update();
+}
+
+void Display::_mapColumns()
+{
+  _pixelColumn.assign(ClockFace::pixelCount(), 0);
+  for (int x = 0; x < NEOPIXEL_COLUMNS; x++)
+  {
+    for (int y = 0; y < NEOPIXEL_ROWS; y++)
+    {
+      _pixelColumn[_clockFace->map(x, y)] = static_cast<float>(x) / (NEOPIXEL_COLUMNS - 1);
+    }
+  }
+  _pixelColumn[_clockFace->mapMinute(ClockFace::TopRight)] = 1;
+  _pixelColumn[_clockFace->mapMinute(ClockFace::BottomRight)] = 1;
+}
+
+RgbColor Display::_litColor(uint16_t index)
+{
+  RgbColor color = _brightnessController.getCorrectedColor();
+  unsigned long now = millis();
+  switch (_effect)
+  {
+  case EFFECT_RAINBOW:
+  case EFFECT_COLORLOOP:
+  {
+    // Keep the brightness of the chosen color, only the hue moves.
+    float hue = (now % 60000) / 60000.0f;
+    if (_effect == EFFECT_RAINBOW)
+    {
+      hue = (now % 6000) / 6000.0f + _pixelColumn[index];
+    }
+    return HsbColor(hue - floorf(hue), 1.0f, HsbColor(color).B);
+  }
+  case EFFECT_BREATHE:
+  {
+    float wave = 0.5f - 0.5f * cosf(2 * PI * (now % 4000) / 4000.0f);
+    return color.Dim(64 + 191 * wave);
+  }
+  default:
+    return color;
+  }
+}
+
+void Display::_renderEffect()
+{
+  const std::vector<bool> &state = _clockFace->getState();
+  for (uint16_t index = 0; index < state.size(); index++)
+  {
+    if (state[index])
+    {
+      _pixels.SetPixelColor(index, _litColor(index));
+    }
   }
 }
 
