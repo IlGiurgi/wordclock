@@ -33,6 +33,69 @@ Display display(&clockFace);
 
 Iot iot(&display, &rtc);
 
+// The time shown is kept by the ESP32 and only re-synced from the RTC every
+// RTC_SYNC_INTERVAL ms. Polling the RTC over I2C ten times a second froze the
+// displayed time whenever LED noise wedged the bus until a power cycle.
+#define RTC_SYNC_INTERVAL 10000
+#define DISPLAY_UPDATE_INTERVAL 100
+#define RTC_I2C_ADDRESS 0x68
+
+#ifdef SDA_PIN
+#define RTC_SDA SDA_PIN
+#define RTC_SCL SCL_PIN
+#else
+#define RTC_SDA SDA
+#define RTC_SCL SCL
+#endif
+
+// Last time read from the RTC and the millis() it was read at.
+DateTime rtc_time;
+unsigned long rtc_time_ms = 0;
+bool rtc_time_valid = false;
+unsigned long last_rtc_sync = 0;
+unsigned long last_display_update = 0;
+
+// Frees a slave holding SDA low by clocking SCL, then restarts the bus.
+void recoverI2C()
+{
+  DLOGLN("RTC read failed, recovering I2C bus");
+  Wire.end();
+  pinMode(RTC_SDA, INPUT_PULLUP);
+  pinMode(RTC_SCL, OUTPUT_OPEN_DRAIN);
+  for (int i = 0; i < 9; i++)
+  {
+    digitalWrite(RTC_SCL, LOW);
+    delayMicroseconds(5);
+    digitalWrite(RTC_SCL, HIGH);
+    delayMicroseconds(5);
+  }
+  Wire.begin(RTC_SDA, RTC_SCL);
+}
+
+// Current time: the last RTC reading plus the time elapsed since.
+DateTime currentTime()
+{
+  return rtc_time + TimeSpan((millis() - rtc_time_ms) / 1000);
+}
+
+// Re-reads the RTC, keeping the running time when the read looks wrong.
+void syncFromRTC()
+{
+  Wire.beginTransmission(RTC_I2C_ADDRESS);
+  bool busOk = Wire.endTransmission() == 0;
+  DateTime now = busOk ? rtc.now() : DateTime((uint32_t)0);
+  // A frozen RTC returns the same time on every read.
+  bool advancing = !rtc_time_valid || now != rtc_time;
+  if (busOk && now.isValid() && now.year() > 2000 && advancing)
+  {
+    rtc_time = now;
+    rtc_time_ms = millis();
+    rtc_time_valid = true;
+    return;
+  }
+  recoverI2C();
+}
+
 void setup()
 {
   setupLogging();
@@ -48,19 +111,26 @@ void setup()
   {
     DCHECK("RTC lost power. Battery was removed ?");
   }
+  syncFromRTC();
+  last_rtc_sync = millis();
 
   display.setup();
   iot.setup();
 }
 
-long last_rtc_update = 0;
 void loop()
 {
-  long ts_now = millis();
-  if ((ts_now - last_rtc_update) > 99) {
-    DateTime now = rtc.now();
+  unsigned long ts_now = millis();
+  if (ts_now - last_rtc_sync >= RTC_SYNC_INTERVAL)
+  {
+    syncFromRTC();
+    last_rtc_sync = ts_now;
+  }
+  if (rtc_time_valid && ts_now - last_display_update >= DISPLAY_UPDATE_INTERVAL)
+  {
+    DateTime now = currentTime();
     display.updateForTime(now.hour(), now.minute(), now.second());
-    last_rtc_update = ts_now;
+    last_display_update = ts_now;
   }
 
   display.loop();
