@@ -26,6 +26,14 @@ void Display::loop()
   }
   if (_bootAnimations.IsAnimating()) {
     _bootAnimations.UpdateAnimations();
+  } else if (_mode == ANIMATION) {
+    unsigned long elapsed = millis() - _animationStartMs;
+    if (elapsed >= _animationDurationMs) {
+      stopAnimation();
+    } else if (millis() - _animationFrameMs >= EFFECT_FRAME_INTERVAL) {
+      _animationFrameMs = millis();
+      _renderAnimation(elapsed);
+    }
   } else if (_mode == MATRIX) {
       if (_matrix_buf.size() >= NEOPIXEL_COLUMNS * NEOPIXEL_ROWS) {
         _pixels.SetPixelColor(_clockFace->mapMinute(ClockFace::TopLeft), black);
@@ -131,6 +139,11 @@ void Display::setColor(const RgbColor &color)
 void Display::setOff()
 {
   _off = true;
+  if (_mode == ANIMATION)
+  {
+    _particles.clear();
+    _mode = CLOCK;
+  }
   _update();
 }
 
@@ -254,6 +267,260 @@ void Display::_renderEffect()
     {
       _pixels.SetPixelColor(index, _litColor(index));
     }
+  }
+}
+
+namespace
+{
+const char *const kHeart[NEOPIXEL_ROWS] = {
+    "...........",
+    "..XX...XX..",
+    ".XXXX.XXXX.",
+    ".XXXXXXXXX.",
+    ".XXXXXXXXX.",
+    "..XXXXXXX..",
+    "...XXXXX...",
+    "....XXX....",
+    ".....X.....",
+    "..........."};
+
+const char *const kSmile[NEOPIXEL_ROWS] = {
+    "...XXXXX...",
+    "..X.....X..",
+    ".X.......X.",
+    "X..X...X..X",
+    "X..X...X..X",
+    "X.........X",
+    "X.X.....X.X",
+    ".X.XXXXX.X.",
+    "..X.....X..",
+    "...XXXXX..."};
+
+// Same smiley with the right eye closed.
+const char *const kWink[NEOPIXEL_ROWS] = {
+    "...XXXXX...",
+    "..X.....X..",
+    ".X.......X.",
+    "X..X......X",
+    "X..X..XXX.X",
+    "X.........X",
+    "X.X.....X.X",
+    ".X.XXXXX.X.",
+    "..X.....X..",
+    "...XXXXX..."};
+
+const char *const kStar[NEOPIXEL_ROWS] = {
+    ".....X.....",
+    ".....X.....",
+    "....XXX....",
+    "XXXXXXXXXXX",
+    ".XXXXXXXXX.",
+    "..XXXXXXX..",
+    "...XXXXX...",
+    "..XXX.XXX..",
+    ".XX.....XX.",
+    "XX.......XX"};
+} // namespace
+
+const char *Display::animationName(Animation animation)
+{
+  switch (animation)
+  {
+  case ANIMATION_HEART:
+    return "heart";
+  case ANIMATION_SMILE:
+    return "smile";
+  case ANIMATION_STAR:
+    return "star";
+  case ANIMATION_MATRIX:
+    return "matrix";
+  case ANIMATION_FIREWORKS:
+    return "fireworks";
+  case ANIMATION_SNOW:
+    return "snow";
+  default:
+    return "";
+  }
+}
+
+Display::Animation Display::animationFromName(const String &name)
+{
+  for (int animation = 0; animation < ANIMATION_COUNT; animation++)
+  {
+    if (name.equalsIgnoreCase(animationName(static_cast<Animation>(animation))))
+    {
+      return static_cast<Animation>(animation);
+    }
+  }
+  return ANIMATION_COUNT;
+}
+
+void Display::playAnimation(Animation animation, unsigned long durationMs)
+{
+  if (animation >= ANIMATION_COUNT || _off || (_mode != CLOCK && _mode != ANIMATION))
+  {
+    return;
+  }
+  DLOG("Animation: ");
+  DLOGLN(animationName(animation));
+  _animations.StopAll();
+  _mode = ANIMATION;
+  _animation = animation;
+  _animationStartMs = millis();
+  _animationDurationMs = durationMs;
+  _animationFrameMs = 0;
+  _particles.clear();
+  _burstRadius = -1;
+  _pixels.ClearTo(black);
+}
+
+void Display::stopAnimation()
+{
+  if (_mode != ANIMATION)
+  {
+    return;
+  }
+  _particles.clear();
+  _mode = CLOCK;
+  _update(50);
+}
+
+void Display::_setGridPixel(int x, int y, RgbColor color)
+{
+  if (x >= 0 && x < NEOPIXEL_COLUMNS && y >= 0 && y < NEOPIXEL_ROWS)
+  {
+    _pixels.SetPixelColor(_clockFace->map(x, y), color);
+  }
+}
+
+void Display::_drawBitmap(const char *const *rows, RgbColor color)
+{
+  for (int y = 0; y < NEOPIXEL_ROWS; y++)
+  {
+    for (int x = 0; x < NEOPIXEL_COLUMNS; x++)
+    {
+      _setGridPixel(x, y, rows[y][x] == 'X' ? color : black);
+    }
+  }
+}
+
+void Display::_renderAnimation(unsigned long elapsedMs)
+{
+  // Follow the chosen brightness, but stay visible when the clock is very dim.
+  const float brightness = max(HsbColor(_brightnessController.getCorrectedColor()).B, 0.12f);
+  auto hsb = [brightness](float hue, float saturation, float value) {
+    return RgbColor(HsbColor(hue - floorf(hue), saturation, value * brightness));
+  };
+
+  switch (_animation)
+  {
+  case ANIMATION_HEART:
+  {
+    // Two quick beats per second, like a heartbeat.
+    float t = (elapsedMs % 1000) / 1000.0f;
+    float beat = max(expf(-powf((t - 0.1f) * 12, 2)), 0.7f * expf(-powf((t - 0.35f) * 12, 2)));
+    _drawBitmap(kHeart, hsb(0, 1, 0.45f + 0.55f * beat));
+    break;
+  }
+  case ANIMATION_SMILE:
+  {
+    // Wink for 300 ms every 2.5 seconds.
+    bool wink = elapsedMs % 2500 > 2200;
+    _drawBitmap(wink ? kWink : kSmile, hsb(0.15f, 1, 1));
+    break;
+  }
+  case ANIMATION_STAR:
+  {
+    _drawBitmap(kStar, black);
+    for (int y = 0; y < NEOPIXEL_ROWS; y++)
+    {
+      for (int x = 0; x < NEOPIXEL_COLUMNS; x++)
+      {
+        if (kStar[y][x] == 'X')
+        {
+          // Each pixel twinkles with its own phase.
+          float phase = (elapsedMs / 700.0f) + (x * 7 + y * 13) * 0.37f;
+          float twinkle = 0.55f + 0.45f * sinf(phase * 2 * PI);
+          _setGridPixel(x, y, hsb(0.12f, 0.85f, twinkle));
+        }
+      }
+    }
+    break;
+  }
+  case ANIMATION_MATRIX:
+  {
+    _fadeAll(40);
+    if (_particles.size() < 7 && random(4) == 0)
+    {
+      _particles.push_back({static_cast<float>(random(NEOPIXEL_COLUMNS)), 0, random(15, 40) / 100.0f, 0});
+    }
+    for (auto it = _particles.begin(); it != _particles.end();)
+    {
+      _setGridPixel(it->x, it->y, hsb(0.33f, 0.4f, 1));
+      it->y += it->speed;
+      it = it->y >= NEOPIXEL_ROWS + 1 ? _particles.erase(it) : it + 1;
+    }
+    break;
+  }
+  case ANIMATION_FIREWORKS:
+  {
+    _fadeAll(25);
+    if (_particles.empty())
+    {
+      // New rocket: x, current height, burst height, hue.
+      _particles.push_back({static_cast<float>(random(2, NEOPIXEL_COLUMNS - 2)), NEOPIXEL_ROWS - 1,
+                            static_cast<float>(random(2, 5)), random(100) / 100.0f});
+      _burstRadius = -1;
+    }
+    Particle &rocket = _particles.front();
+    if (_burstRadius < 0)
+    {
+      _setGridPixel(rocket.x, rocket.y, hsb(0.1f, 0.3f, 1));
+      rocket.y -= 0.5f;
+      if (rocket.y <= rocket.speed)
+      {
+        _burstRadius = 0;
+      }
+    }
+    else
+    {
+      for (int y = 0; y < NEOPIXEL_ROWS; y++)
+      {
+        for (int x = 0; x < NEOPIXEL_COLUMNS; x++)
+        {
+          if (fabs(_distance(x, y, rocket.x, rocket.y) - _burstRadius) < 0.6)
+          {
+            _setGridPixel(x, y, hsb(rocket.hue + random(10) / 100.0f, 1, 1 - _burstRadius / 6));
+          }
+        }
+      }
+      _burstRadius += 0.35f;
+      if (_burstRadius > 5)
+      {
+        _particles.clear();
+      }
+    }
+    break;
+  }
+  case ANIMATION_SNOW:
+  {
+    _fadeAll(60);
+    if (_particles.size() < 12 && random(3) == 0)
+    {
+      _particles.push_back({static_cast<float>(random(NEOPIXEL_COLUMNS)), 0, random(5, 15) / 100.0f, 0});
+    }
+    for (auto it = _particles.begin(); it != _particles.end();)
+    {
+      _setGridPixel(roundf(it->x), it->y, hsb(0.6f, 0.15f, 1));
+      it->y += it->speed;
+      // Drift slowly sideways.
+      it->x += (random(3) - 1) * 0.1f;
+      it = it->y >= NEOPIXEL_ROWS ? _particles.erase(it) : it + 1;
+    }
+    break;
+  }
+  default:
+    break;
   }
 }
 

@@ -22,7 +22,10 @@
 #define LED_MAX_MILLIAMPS 1500
 #endif
 
-// Frame interval of the lighting effects, in ms.
+// Default duration of a full screen animation, in ms.
+#define ANIMATION_DURATION 10000
+
+// Frame interval of the lighting effects and animations, in ms.
 #define EFFECT_FRAME_INTERVAL 40
 
 // Typical WS2812 draw for one color channel at full duty, in mA.
@@ -66,7 +69,8 @@ public:
     BOOT,
     CLOCK,
     MATRIX,
-    TICKER
+    TICKER,
+    ANIMATION
   };
   Mode getMode() { return _mode; }
 
@@ -84,6 +88,25 @@ public:
   // Returns EFFECT_COUNT for an unknown name.
   static Effect effectFromName(const String &name);
 
+  // Full screen animations, played for a while instead of the time.
+  enum Animation {
+    ANIMATION_HEART,     // Beating red heart.
+    ANIMATION_SMILE,     // Yellow smiley that winks.
+    ANIMATION_STAR,      // Twinkling golden star.
+    ANIMATION_MATRIX,    // Green falling code.
+    ANIMATION_FIREWORKS, // Rockets bursting in random colors.
+    ANIMATION_SNOW,      // Falling snowflakes.
+    ANIMATION_COUNT
+  };
+  // Plays an animation, then returns to the clock. Ignored when the display
+  // is off or not showing the time.
+  void playAnimation(Animation animation, unsigned long durationMs = ANIMATION_DURATION);
+  // Returns to the clock if an animation is playing.
+  void stopAnimation();
+  static const char *animationName(Animation animation);
+  // Returns ANIMATION_COUNT for an unknown name.
+  static Animation animationFromName(const String &name);
+
   // Current budget for the LEDs, in mA.
   void setMaxMilliamps(uint16_t milliamps);
   uint16_t getMaxMilliamps() { return _maxMilliamps; }
@@ -100,6 +123,15 @@ private:
 
   // Recolors the lit pixels for the current effect frame.
   void _renderEffect();
+
+  // Draws the current animation frame.
+  void _renderAnimation(unsigned long elapsedMs);
+
+  // Sets a pixel of the letter grid, ignoring positions outside of it.
+  void _setGridPixel(int x, int y, RgbColor color);
+
+  // Draws an 11x10 bitmap, one string per row with 'X' for lit pixels.
+  void _drawBitmap(const char *const *rows, RgbColor color);
 
   // Updates pixel color on the display.
   void _update(int animationSpeed = TIME_CHANGE_ANIMATION_SPEED);
@@ -122,6 +154,17 @@ private:
   unsigned long _effectFrameMs = 0;
   // Horizontal position of each pixel, from 0 (left) to 1 (right).
   std::vector<float> _pixelColumn;
+
+  Animation _animation;
+  unsigned long _animationStartMs = 0;
+  unsigned long _animationDurationMs = 0;
+  unsigned long _animationFrameMs = 0;
+  // Snowflakes, code drops and the firework rocket.
+  struct Particle {
+    float x, y, speed, hue;
+  };
+  std::vector<Particle> _particles;
+  float _burstRadius = -1; // Firework burst radius, negative while rising.
 
   // Whether the display should show AM/PM information.
   bool _show_ampm = 0;

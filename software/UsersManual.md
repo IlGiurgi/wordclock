@@ -130,6 +130,13 @@ Topics are prefixed with the name defined as `Clock name` in the web UI settings
   - `rainbow`: a rainbow wave moving across the columns
   - `colorloop`: all letters slowly cycle through the hues (one minute per cycle)
   - `breathe`: the chosen color slowly pulses between 25% and 100%
+- `wordclock/light/animation/set` -> plays a full screen animation instead of the time, then returns to the clock. Payload is the animation name, optionally followed by `,<seconds>` (1-600, default 10), e.g. `heart` or `fireworks,30`. `stop` returns to the clock right away. Do not retain this message, or the animation replays on every reconnection.
+  - `heart`: beating red heart
+  - `smile`: winking yellow smiley
+  - `star`: twinkling golden star
+  - `matrix`: green falling code
+  - `fireworks`: rockets bursting in random colors
+  - `snow`: falling snowflakes
 
 #### Matrix paint (experimental)
 - `wordclock/light/matrix/set` -> activates Paint mode and displays the payload, a 110 characters string using a preset palette, see [Paint](#paint)
@@ -156,6 +163,15 @@ mqtt:
         effect_list: ["none", "rainbow", "colorloop", "breathe"]
         qos: 0
         optimistic: false
+  button:
+      - name: "Wordclock heart"
+        availability_topic: "wordclock/availability"
+        command_topic: "wordclock/light/animation/set"
+        payload_press: "heart"
+      - name: "Wordclock fireworks"
+        availability_topic: "wordclock/availability"
+        command_topic: "wordclock/light/animation/set"
+        payload_press: "fireworks"
   sensor:
       - name: "Wordclock Light sensor"
         availability_topic: "wordclock/availability"

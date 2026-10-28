@@ -719,6 +719,7 @@ bool Iot::connectMQTT_()
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/light/text/set");
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/light/limit/set");
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/light/effect/set");
+  mqtt_client_.subscribe(mqtt_topic_prefix_ + "/light/animation/set");
 
   // Update availability.
   mqtt_client_.publish(mqtt_topic_prefix_ + "/availability", "online", true /* retained */, 0 /* QoS */);
@@ -838,6 +839,23 @@ void Iot::mqttMessageReceived_(String &topic, String &payload)
     mqtt_client_.publish(
         mqtt_topic_prefix_ + "/light/effect",
         Display::effectName(display_->getEffect()), false /* retained */, 0 /* QoS */);
+  }
+  else if (topic == mqtt_topic_prefix_ + "/light/animation/set")
+  {
+    // Payload: an animation name, optionally followed by ",<seconds>".
+    int comma = payload.indexOf(',');
+    String name = comma < 0 ? payload : payload.substring(0, comma);
+    name.trim();
+    if (name.equalsIgnoreCase("stop"))
+    {
+      display_->stopAnimation();
+      return;
+    }
+    long seconds = comma < 0 ? ANIMATION_DURATION / 1000 : payload.substring(comma + 1).toInt();
+    if (seconds >= 1 && seconds <= 600)
+    {
+      display_->playAnimation(Display::animationFromName(name), seconds * 1000);
+    }
   }
   else if (topic == mqtt_topic_prefix_ + "/light/text/set")
   {
