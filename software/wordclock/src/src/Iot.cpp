@@ -10,6 +10,8 @@
 #include <uri/UriBraces.h>
 #include <MQTT.h>
 #include <esp_sntp.h>
+#include <esp_system.h>
+#include <esp_timer.h>
 #include <string>
 #include <ArduinoJson.h>
 
@@ -60,6 +62,31 @@ namespace
   extern const uint8_t style_css_start[] asm("_binary_src_style_css_start");
   extern const uint8_t style_css_end[] asm("_binary_src_style_css_end");
 
+  // Name of the reason for the last reset, to tell brownouts from crashes.
+  const char *resetReasonName()
+  {
+    switch (esp_reset_reason())
+    {
+    case ESP_RST_POWERON: return "POWERON";
+    case ESP_RST_EXT: return "EXTERNAL";
+    case ESP_RST_SW: return "SOFTWARE";
+    case ESP_RST_PANIC: return "PANIC";
+    case ESP_RST_INT_WDT: return "INT_WATCHDOG";
+    case ESP_RST_TASK_WDT: return "TASK_WATCHDOG";
+    case ESP_RST_WDT: return "WATCHDOG";
+    case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
+    case ESP_RST_BROWNOUT: return "BROWNOUT";
+    case ESP_RST_SDIO: return "SDIO";
+    default: return "UNKNOWN";
+    }
+  }
+
+  // Seconds since boot, without the 49 days rollover of millis().
+  uint32_t uptimeSeconds()
+  {
+    return esp_timer_get_time() / 1000000;
+  }
+
   // Custom HTML element will be added at the beginning of the body element.
   const char CUSTOMHTML_BODY_INNER[] PROGMEM = "<header><div class=\"logoContainer\"><img class=\"logo\" src=\"logo.svg\"/></div></header><aside>Firmware version " AUTO_VERSION "</aside>\n";
 
@@ -85,6 +112,7 @@ namespace
     String getBodyInner() override
     {
       return String(FPSTR(CUSTOMHTML_BODY_INNER)) +
+            "<aside>Last reset: " + resetReasonName() + ", uptime " + String(uptimeSeconds()) + " s</aside>\n" +
             iotwebconf::HtmlFormatProvider::getBodyInner();
     }
   };
@@ -490,6 +518,13 @@ void Iot::loop()
             mqtt_client_.publish(
                 mqtt_topic_prefix_ + "/sensor/ldr",
                 (String)sensorValue, true /* retained */, 0 /* QoS */);
+            // Not retained: a stale value must not survive a reboot.
+            mqtt_client_.publish(
+                mqtt_topic_prefix_ + "/diag/reset_reason",
+                resetReasonName(), false /* retained */, 0 /* QoS */);
+            mqtt_client_.publish(
+                mqtt_topic_prefix_ + "/diag/uptime",
+                String(uptimeSeconds()), false /* retained */, 0 /* QoS */);
           }
         }
         else
