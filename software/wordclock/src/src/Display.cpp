@@ -55,7 +55,50 @@ void Display::loop()
     }
     _brightnessController.loop();
   }
+  _show();
+}
+
+void Display::_show()
+{
+  if (!_pixels.IsDirty())
+  {
+    return;
+  }
+
+  // Sum of all channel values, where 255 on one channel draws LED_CHANNEL_MILLIAMPS.
+  const uint16_t count = _pixels.PixelCount();
+  uint32_t channelSum = 0;
+  for (uint16_t index = 0; index < count; index++)
+  {
+    RgbColor color = _pixels.GetPixelColor(index);
+    channelSum += color.R + color.G + color.B;
+  }
+
+  const uint32_t channelBudget = (uint32_t)LED_MAX_MILLIAMPS * 255 / LED_CHANNEL_MILLIAMPS;
+  if (channelSum <= channelBudget)
+  {
+    _pixels.Show();
+    return;
+  }
+
+  // Send a scaled copy, then restore the unscaled colors: animations and fades
+  // read the buffer back and must not compound the scaling.
+  std::vector<RgbColor> unscaled(count);
+  for (uint16_t index = 0; index < count; index++)
+  {
+    RgbColor color = _pixels.GetPixelColor(index);
+    unscaled[index] = color;
+    _pixels.SetPixelColor(index, RgbColor(color.R * channelBudget / channelSum,
+                                          color.G * channelBudget / channelSum,
+                                          color.B * channelBudget / channelSum));
+  }
   _pixels.Show();
+  for (uint16_t index = 0; index < count; index++)
+  {
+    _pixels.SetPixelColor(index, unscaled[index]);
+  }
+  // The LEDs already show this frame, scaled.
+  _pixels.ResetDirty();
 }
 
 void Display::setClockFace(ClockFace* clockface)
@@ -292,7 +335,7 @@ void Display::scrollText(IotWebConf &iwc, String text, RgbColor textColor, int s
     }
 
     // Update the matrix
-    _pixels.Show();
+    _show();
 
     // Update scroll position
     scrollPosition += scrollDirection;

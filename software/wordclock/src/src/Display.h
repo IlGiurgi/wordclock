@@ -16,6 +16,17 @@
 //
 #define TIME_CHANGE_ANIMATION_SPEED 400
 
+// Current budget for the LEDs, in mA. Frames estimated above it are dimmed
+// proportionally so an undersized power supply does not brown out.
+#ifndef LED_MAX_MILLIAMPS
+#define LED_MAX_MILLIAMPS 1500
+#endif
+
+// Typical WS2812 draw for one color channel at full duty, in mA.
+#ifndef LED_CHANNEL_MILLIAMPS
+#define LED_CHANNEL_MILLIAMPS 20
+#endif
+
 class Display
 {
 public:
@@ -57,6 +68,9 @@ public:
   Mode getMode() { return _mode; }
 
 private:
+  // Sends the pixels to the LEDs, dimmed to stay within LED_MAX_MILLIAMPS.
+  void _show();
+
   // Updates pixel color on the display.
   void _update(int animationSpeed = TIME_CHANGE_ANIMATION_SPEED);
 
