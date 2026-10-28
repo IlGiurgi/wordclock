@@ -12,6 +12,7 @@
 #include <esp_sntp.h>
 #include <esp_system.h>
 #include <esp_timer.h>
+#include <Preferences.h>
 #include <string>
 #include <ArduinoJson.h>
 
@@ -34,6 +35,13 @@
 #define NTP_SERVER "pool.ntp.org"
 // LDR MQTT topic publish interval in ms.
 #define MQTT_LDR_PUBLISH_INTERVAL 15000
+// Accepted range for the LED current budget set over MQTT, in mA.
+#define LED_LIMIT_MIN_MILLIAMPS 50
+#define LED_LIMIT_MAX_MILLIAMPS 3000
+// NVS namespace and key of the LED current budget, kept apart from the
+// IotWebConf configuration so CONFIG_VERSION does not change.
+#define PREFS_NAMESPACE "wordclock"
+#define PREFS_LED_LIMIT_KEY "led_ma"
 // Max accepted lenghth of text to scroll.
 #define TICKER_MAX_LENGTH 200
 // Versioning pulled from git by versioning.py script.
@@ -324,6 +332,11 @@ void Iot::updateClockRTCFromParams_()
 void Iot::setup()
 {
   DCHECK(!initialized_, "[WARN] Trying to setup Iot multiple times.");
+
+  Preferences prefs;
+  prefs.begin(PREFS_NAMESPACE, true /* readOnly */);
+  display_->setMaxMilliamps(prefs.getUShort(PREFS_LED_LIMIT_KEY, LED_MAX_MILLIAMPS));
+  prefs.end();
 
   this->show_ampm_value_[0] = '\0';
   this->ldr_sensitivity_value_[0] = '\0';
@@ -702,6 +715,7 @@ bool Iot::connectMQTT_()
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/light/matrix/set");
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/light/matrix/unset");
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/light/text/set");
+  mqtt_client_.subscribe(mqtt_topic_prefix_ + "/light/limit/set");
 
   // Update availability.
   mqtt_client_.publish(mqtt_topic_prefix_ + "/availability", "online", true /* retained */, 0 /* QoS */);
@@ -711,6 +725,10 @@ bool Iot::connectMQTT_()
   mqtt_client_.publish(
       mqtt_topic_prefix_ + "/light/color",
       rgbToMqttString_(parseColorValue(color_value_, RgbColor(0, 0, 0))), true /* retained */, 0 /* QoS */);
+  // Publish current LED current budget.
+  mqtt_client_.publish(
+      mqtt_topic_prefix_ + "/light/limit",
+      String(display_->getMaxMilliamps()), false /* retained */, 0 /* QoS */);
 
   return true;
 }
@@ -782,6 +800,22 @@ void Iot::mqttMessageReceived_(String &topic, String &payload)
   else if (topic == mqtt_topic_prefix_ + "/light/matrix/unset")
   {
     display_->clearMatrix();
+  }
+  else if (topic == mqtt_topic_prefix_ + "/light/limit/set")
+  {
+    long milliamps = payload.toInt();
+    if (milliamps >= LED_LIMIT_MIN_MILLIAMPS && milliamps <= LED_LIMIT_MAX_MILLIAMPS &&
+        milliamps != display_->getMaxMilliamps())
+    {
+      display_->setMaxMilliamps(milliamps);
+      Preferences prefs;
+      prefs.begin(PREFS_NAMESPACE, false /* readOnly */);
+      prefs.putUShort(PREFS_LED_LIMIT_KEY, milliamps);
+      prefs.end();
+    }
+    mqtt_client_.publish(
+        mqtt_topic_prefix_ + "/light/limit",
+        String(display_->getMaxMilliamps()), false /* retained */, 0 /* QoS */);
   }
   else if (topic == mqtt_topic_prefix_ + "/light/text/set")
   {

@@ -16,8 +16,8 @@
 //
 #define TIME_CHANGE_ANIMATION_SPEED 400
 
-// Current budget for the LEDs, in mA. Frames estimated above it are dimmed
-// proportionally so an undersized power supply does not brown out.
+// Default current budget for the LEDs, in mA. Frames estimated above it are
+// dimmed proportionally so an undersized power supply does not brown out.
 #ifndef LED_MAX_MILLIAMPS
 #define LED_MAX_MILLIAMPS 1500
 #endif
@@ -67,8 +67,12 @@ public:
   };
   Mode getMode() { return _mode; }
 
+  // Current budget for the LEDs, in mA.
+  void setMaxMilliamps(uint16_t milliamps);
+  uint16_t getMaxMilliamps() { return _maxMilliamps; }
+
 private:
-  // Sends the pixels to the LEDs, dimmed to stay within LED_MAX_MILLIAMPS.
+  // Sends the pixels to the LEDs, dimmed to stay within _maxMilliamps.
   void _show();
 
   // Updates pixel color on the display.
@@ -85,6 +89,9 @@ private:
   Mode _mode;
   std::vector<RgbColor> _matrix_buf;
   
+  // Current budget for the LEDs, in mA.
+  uint16_t _maxMilliamps = LED_MAX_MILLIAMPS;
+
   // Whether the display should show AM/PM information.
   bool _show_ampm = 0;
 

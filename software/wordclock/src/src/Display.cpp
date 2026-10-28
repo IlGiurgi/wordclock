@@ -74,7 +74,7 @@ void Display::_show()
     channelSum += color.R + color.G + color.B;
   }
 
-  const uint32_t channelBudget = (uint32_t)LED_MAX_MILLIAMPS * 255 / LED_CHANNEL_MILLIAMPS;
+  const uint32_t channelBudget = (uint32_t)_maxMilliamps * 255 / LED_CHANNEL_MILLIAMPS;
   if (channelSum <= channelBudget)
   {
     _pixels.Show();
@@ -99,6 +99,12 @@ void Display::_show()
   }
   // The LEDs already show this frame, scaled.
   _pixels.ResetDirty();
+}
+
+void Display::setMaxMilliamps(uint16_t milliamps)
+{
+  _maxMilliamps = milliamps;
+  _pixels.Dirty(); // Resend the current frame with the new budget.
 }
 
 void Display::setClockFace(ClockFace* clockface)
