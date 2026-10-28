@@ -571,7 +571,7 @@ void time_sync_notification_cb(struct timeval *tv)
     struct tm timeinfo;
     localtime_r(&now, &timeinfo);
     iot_sntp_global->get_rtc()->adjust(
-        DateTime(timeinfo.tm_year, timeinfo.tm_mon, timeinfo.tm_mday,
+        DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
                  timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec));
     DLOG("Interval for sync: ");
     DLOGLN(sntp_get_sync_interval());

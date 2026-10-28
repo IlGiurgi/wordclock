@@ -48,8 +48,9 @@ Iot iot(&display, &rtc);
 #define RTC_SCL SCL
 #endif
 
-// Last time read from the RTC and the millis() it was read at.
-DateTime rtc_time;
+// Last time of day read from the RTC, in seconds, and the millis() it was
+// read at. Dates are ignored: only the time of day is shown.
+uint32_t rtc_seconds = 0;
 unsigned long rtc_time_ms = 0;
 bool rtc_time_valid = false;
 unsigned long last_rtc_sync = 0;
@@ -72,10 +73,10 @@ void recoverI2C()
   Wire.begin(RTC_SDA, RTC_SCL);
 }
 
-// Current time: the last RTC reading plus the time elapsed since.
-DateTime currentTime()
+// Current time of day in seconds: the last RTC reading plus the time elapsed since.
+uint32_t currentSeconds()
 {
-  return rtc_time + TimeSpan((millis() - rtc_time_ms) / 1000);
+  return (rtc_seconds + (millis() - rtc_time_ms) / 1000) % 86400;
 }
 
 // Re-reads the RTC, keeping the running time when the read looks wrong.
@@ -84,11 +85,13 @@ void syncFromRTC()
   Wire.beginTransmission(RTC_I2C_ADDRESS);
   bool busOk = Wire.endTransmission() == 0;
   DateTime now = busOk ? rtc.now() : DateTime((uint32_t)0);
+  uint32_t seconds = now.hour() * 3600UL + now.minute() * 60UL + now.second();
   // A frozen RTC returns the same time on every read.
-  bool advancing = !rtc_time_valid || now != rtc_time;
-  if (busOk && now.isValid() && now.year() > 2000 && advancing)
+  bool advancing = !rtc_time_valid || seconds != rtc_seconds;
+  bool sane = now.hour() < 24 && now.minute() < 60 && now.second() < 60;
+  if (busOk && sane && advancing)
   {
-    rtc_time = now;
+    rtc_seconds = seconds;
     rtc_time_ms = millis();
     rtc_time_valid = true;
     return;
@@ -128,8 +131,8 @@ void loop()
   }
   if (rtc_time_valid && ts_now - last_display_update >= DISPLAY_UPDATE_INTERVAL)
   {
-    DateTime now = currentTime();
-    display.updateForTime(now.hour(), now.minute(), now.second());
+    uint32_t seconds = currentSeconds();
+    display.updateForTime(seconds / 3600, seconds / 60 % 60, seconds % 60);
     last_display_update = ts_now;
   }
 
