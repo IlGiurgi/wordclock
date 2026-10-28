@@ -81,6 +81,10 @@ private:
   // Dirty flag.
   bool changed_;
 
+  // Sensor dim level (MIN_DIM to 255) behind corrected_, and when it was set.
+  int dim_ = -1;
+  unsigned long dimUpdateMs_ = 0;
+
   // The light sensor.
   LDRReader lightSensor_;
 };
