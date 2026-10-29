@@ -4,6 +4,7 @@
 #include "Display.h"
 #include "ClockFace.h"
 #include "IotRangeValueParameter.h"
+#include "NightMode.h"
 
 #include <MQTT.h>
 #include <IotWebConf.h>
@@ -27,6 +28,9 @@ public:
 
   void setup();
   void loop();
+
+  // Applies the night mode for the given time of day. weekday: 0 = Sunday.
+  void updateNight(uint32_t secondsOfDay, uint8_t weekday);
 
   // Used for the C callback for the NTP sync.
   RTC_DS3231 *get_rtc() { return rtc_; }
@@ -68,6 +72,12 @@ private:
   bool firstWifiConnection_ = true;
   // Connects to MQTT server using provided credentials.
   bool connectMqttOptions_();
+  // Publishes (or removes) the Home Assistant MQTT discovery configs.
+  void publishDiscovery_(bool enabled);
+  // Publishes the night mode settings.
+  void publishNight_();
+  // Updates the night mode from a JSON payload, returns false if invalid.
+  bool setNightFromJson_(const String &payload);
   // Handles incoming MQTT messages.
   void mqttMessageReceived_(String &topic, String &payload);
   // Updates the display with an arbitrary payload.
@@ -87,7 +97,8 @@ private:
   // Server for OTA firmware update.
   HTTPUpdateServer http_updater_;
   // MQTT client.
-  MQTTClient mqtt_client_ = MQTTClient(256);
+  // Large enough for the Home Assistant discovery configs.
+  MQTTClient mqtt_client_ = MQTTClient(1024);
   // WiFi client (for MQTT).
   WiFiClient net_;
 
@@ -105,6 +116,15 @@ private:
 
   // Timestamp of last MQTT push.
   unsigned long last_mqtt_report_ = 0;
+  // Whether an animation was playing, to report the effect again when it ends.
+  bool animating_ = false;
+
+  // Night mode settings and whether the night slot is active.
+  NightMode night_;
+  bool night_active_ = false;
+
+  // Whether to publish the Home Assistant MQTT discovery configs.
+  bool discovery_enabled_ = false;
 
   // MQTT topic prefix, derived from the clock name defined in the web UI.
   String mqtt_topic_prefix_;

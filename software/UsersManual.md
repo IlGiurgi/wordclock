@@ -116,10 +116,43 @@ Topics are prefixed with the name defined as `Clock name` in the web UI settings
 - `wordclock/sensor/ldr` -> current raw LDR reading (0-4095), refreshes every 15 seconds
 - `wordclock/light/color` -> current color (in `r,g,b` format)
 - `wordclock/light/switch` -> current state of the display `ON` or `OFF`
+- `wordclock/light/limit` -> current LED current budget in mA (not retained)
+- `wordclock/light/effect` -> current lighting effect (not retained)
+- `wordclock/night` -> night mode settings as JSON, see `wordclock/night/set` (not retained)
+- `wordclock/night/active` -> `ON` while the night mode dims the display, else `OFF` (not retained)
+- `wordclock/diag/log` -> one line per event of the event log, sent after `wordclock/diag/log/get` (not retained)
+- `wordclock/diag/reset_reason` -> reason of the last reset (`POWERON`, `SOFTWARE`, `BROWNOUT`, `PANIC`, `TASK_WATCHDOG`...), refreshes every 15 seconds (not retained)
+- `wordclock/diag/uptime` -> seconds since boot, refreshes every 15 seconds (not retained)
 
 ### Command topics
 - `wordclock/light/color/set` -> sets the LED color, payload must be an `r,g,b` formatted string
 - `wordclock/light/switch/set` -> send `ON` or `OFF` to toggle the display (with a fade effect). The previously set color is restored on `ON`.
+- `wordclock/light/limit/set` -> sets the LED current budget in mA (50-3000), saved across reboots. Frames estimated above it are dimmed proportionally. The default comes from the `LED_MAX_MILLIAMPS` build flag.
+- `wordclock/light/effect/set` -> sets the lighting effect of the lit letters, saved across reboots. The time stays readable and the brightness of the chosen color is kept:
+  - `none`: plain color
+  - `rainbow`: a rainbow wave moving across the columns
+  - `colorloop`: all letters slowly cycle through the hues (one minute per cycle)
+  - `breathe`: the chosen color slowly pulses between 25% and 100%
+  - any animation name below (`heart`, `matrix`, `sunrise`...): plays that animation once, then returns to the clock and reports the current effect again
+- `wordclock/light/animation/set` -> plays a full screen animation instead of the time, then returns to the clock. Payload is the animation name, optionally followed by `,<seconds>` (1-600, default 10, 25 for `sunrise`), e.g. `heart` or `fireworks,30`. `stop` returns to the clock right away. Do not retain this message, or the animation replays on every reconnection.
+  - `heart`: beating red heart
+  - `smile`: winking yellow smiley
+  - `star`: twinkling golden star
+  - `matrix`: green falling code
+  - `fireworks`: rockets bursting in random colors
+  - `snow`: falling snowflakes
+  - `boot`: the boot animation with its red, green and blue rings (always about 9 seconds)
+  - `rain`: blue raindrops
+  - `pacman`: Pac-Man eating dots
+  - `ghost`: Pac-Man ghosts floating across the screen in random directions, speeds and colors
+  - `sunrise`: stars fade out while the sky turns from night to day and the sun rises (20 s, then 10 s of daylight)
+
+- `wordclock/night/set` -> night mode, a JSON object where every field is optional: `{"enabled": true, "start": "23:00", "end": "06:30", "days": "1234567", "brightness": 0}`. During the slot the display runs at `brightness` percent (0 switches it off). The slot may span midnight; `days` lists the days it starts on, 1 = Monday ... 7 = Sunday. Runs on the clock, without Home Assistant, and is saved across reboots.
+- `wordclock/discovery/set` -> `ON` publishes [Home Assistant MQTT discovery](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery) configs for the light (with all effects), the light sensor, uptime, last reset, LED limit and night mode, so no YAML is needed. `OFF` removes them. Saved across reboots. The configs are not retained: they are sent again when the clock connects and when Home Assistant announces itself on `homeassistant/status`. Remove a YAML light first to avoid duplicates.
+- `wordclock/diag/log/get` -> publishes the event log on `wordclock/diag/log`
+
+#### Event log
+The clock keeps its last 20 events (boot and reset reason, WiFi, MQTT and NTP, RTC read errors, LED limit and night mode changes) in flash, so they survive resets. Read them at `http://<clock ip>/api/log` (needs the API toggle) or over MQTT.
 
 #### Matrix paint (experimental)
 - `wordclock/light/matrix/set` -> activates Paint mode and displays the payload, a 110 characters string using a preset palette, see [Paint](#paint)
@@ -141,8 +174,20 @@ mqtt:
         command_topic: "wordclock/light/switch/set"
         rgb_state_topic: "wordclock/light/color"
         rgb_command_topic: "wordclock/light/color/set"
+        effect_state_topic: "wordclock/light/effect"
+        effect_command_topic: "wordclock/light/effect/set"
+        effect_list: ["none", "rainbow", "colorloop", "breathe", "heart", "smile", "star", "matrix", "fireworks", "snow", "boot", "rain", "pacman", "ghost", "sunrise"]
         qos: 0
         optimistic: false
+  button:
+      - name: "Wordclock heart"
+        availability_topic: "wordclock/availability"
+        command_topic: "wordclock/light/animation/set"
+        payload_press: "heart"
+      - name: "Wordclock fireworks"
+        availability_topic: "wordclock/availability"
+        command_topic: "wordclock/light/animation/set"
+        payload_press: "fireworks"
   sensor:
       - name: "Wordclock Light sensor"
         availability_topic: "wordclock/availability"
