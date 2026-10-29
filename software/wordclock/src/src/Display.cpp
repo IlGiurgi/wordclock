@@ -353,6 +353,8 @@ const char *Display::animationName(Animation animation)
     return "fireworks";
   case ANIMATION_SNOW:
     return "snow";
+  case ANIMATION_BOOT:
+    return "boot";
   default:
     return "";
   }
@@ -532,6 +534,21 @@ void Display::_renderAnimation(unsigned long elapsedMs)
       it->x += (random(3) - 1) * 0.1f;
       it = it->y >= NEOPIXEL_ROWS ? _particles.erase(it) : it + 1;
     }
+    break;
+  }
+  case ANIMATION_BOOT:
+  {
+    // Same rings as runBootAnimation(), 3 s each, in a loop.
+    static const struct
+    {
+      uint16_t x, y;
+      float hue;
+    } kRings[] = {{5, 10, 0}, {0, 5, 0.33f}, {10, 5, 0.67f}};
+    const auto &ring = kRings[(elapsedMs / 3000) % 3];
+    _fadeAll(10);
+    int radius = NeoEase::QuarticOut((elapsedMs % 3000) / 3000.0f) * 15;
+    RgbColor color = hsb(ring.hue, 1, 0.5f);
+    _circle(ring.x, ring.y, radius, color);
     break;
   }
   default:

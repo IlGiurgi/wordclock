@@ -87,6 +87,7 @@ public:
     EFFECT_MATRIX,
     EFFECT_FIREWORKS,
     EFFECT_SNOW,
+    EFFECT_BOOT,
     EFFECT_COUNT
   };
   void setEffect(Effect effect);
@@ -103,6 +104,7 @@ public:
     ANIMATION_MATRIX,    // Green falling code.
     ANIMATION_FIREWORKS, // Rockets bursting in random colors.
     ANIMATION_SNOW,      // Falling snowflakes.
+    ANIMATION_BOOT,      // Red, green and blue rings of the boot animation.
     ANIMATION_COUNT
   };
   // Plays an animation, then returns to the clock (0 plays it until

@@ -130,7 +130,7 @@ Topics are prefixed with the name defined as `Clock name` in the web UI settings
   - `rainbow`: a rainbow wave moving across the columns
   - `colorloop`: all letters slowly cycle through the hues (one minute per cycle)
   - `breathe`: the chosen color slowly pulses between 25% and 100%
-  - `heart`, `smile`, `star`, `matrix`, `fireworks`, `snow`: the full screen animations below, played until another effect is set (the time is hidden meanwhile)
+  - `heart`, `smile`, `star`, `matrix`, `fireworks`, `snow`, `boot`: the full screen animations below, played until another effect is set (the time is hidden meanwhile)
 - `wordclock/light/animation/set` -> plays a full screen animation instead of the time, then returns to the clock. Payload is the animation name, optionally followed by `,<seconds>` (1-600, default 10), e.g. `heart` or `fireworks,30`. `stop` returns to the clock right away (or to the animated effect, if one is set). Do not retain this message, or the animation replays on every reconnection.
   - `heart`: beating red heart
   - `smile`: winking yellow smiley
@@ -138,6 +138,7 @@ Topics are prefixed with the name defined as `Clock name` in the web UI settings
   - `matrix`: green falling code
   - `fireworks`: rockets bursting in random colors
   - `snow`: falling snowflakes
+  - `boot`: the red, green and blue rings of the boot animation
 
 #### Matrix paint (experimental)
 - `wordclock/light/matrix/set` -> activates Paint mode and displays the payload, a 110 characters string using a preset palette, see [Paint](#paint)
@@ -161,7 +162,7 @@ mqtt:
         rgb_command_topic: "wordclock/light/color/set"
         effect_state_topic: "wordclock/light/effect"
         effect_command_topic: "wordclock/light/effect/set"
-        effect_list: ["none", "rainbow", "colorloop", "breathe", "heart", "smile", "star", "matrix", "fireworks", "snow"]
+        effect_list: ["none", "rainbow", "colorloop", "breathe", "heart", "smile", "star", "matrix", "fireworks", "snow", "boot"]
         qos: 0
         optimistic: false
   button:
