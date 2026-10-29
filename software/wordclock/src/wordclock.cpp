@@ -18,6 +18,7 @@
 #include "src/Display.h"
 #include "src/ClockFace.h"
 #include "src/Iot.h"
+#include "src/EventLog.h"
 #include "src/nodo.h" // Nodo stuff
 RTC_DS3231 rtc;
 
@@ -53,6 +54,8 @@ Iot iot(&display, &rtc);
 uint32_t rtc_seconds = 0;
 unsigned long rtc_time_ms = 0;
 bool rtc_time_valid = false;
+// Day of the week from the RTC, 0 = Sunday.
+uint8_t rtc_weekday = 0;
 unsigned long last_rtc_sync = 0;
 unsigned long last_display_update = 0;
 
@@ -60,6 +63,7 @@ unsigned long last_display_update = 0;
 void recoverI2C()
 {
   DLOGLN("RTC read failed, recovering I2C bus");
+  eventLog("RTC read failed, I2C bus reset");
   Wire.end();
   pinMode(RTC_SDA, INPUT_PULLUP);
   pinMode(RTC_SCL, OUTPUT_OPEN_DRAIN);
@@ -94,6 +98,7 @@ void syncFromRTC()
     rtc_seconds = seconds;
     rtc_time_ms = millis();
     rtc_time_valid = true;
+    rtc_weekday = now.dayOfTheWeek();
     return;
   }
   recoverI2C();
@@ -102,6 +107,7 @@ void syncFromRTC()
 void setup()
 {
   setupLogging();
+  eventLogBegin();
 #ifdef LED_PIN
   pinMode(LED_PIN, OUTPUT);
 #endif
@@ -133,6 +139,7 @@ void loop()
   {
     uint32_t seconds = currentSeconds();
     display.updateForTime(seconds / 3600, seconds / 60 % 60, seconds % 60);
+    iot.updateNight(seconds, rtc_weekday);
     last_display_update = ts_now;
   }
 

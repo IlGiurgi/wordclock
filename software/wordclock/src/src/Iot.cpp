@@ -4,6 +4,7 @@
 #include "Timezones.h"
 #include "clockfaces.h"
 #include "Palette.h"
+#include "EventLog.h"
 
 #include <NeoPixelBus.h>
 #include <WiFi.h>
@@ -43,6 +44,14 @@
 #define PREFS_NAMESPACE "wordclock"
 #define PREFS_LED_LIMIT_KEY "led_ma"
 #define PREFS_EFFECT_KEY "effect"
+#define PREFS_NIGHT_KEY "night"
+#define PREFS_DISCOVERY_KEY "discovery"
+// Home Assistant MQTT discovery prefix and birth topic.
+#define HA_DISCOVERY_PREFIX "homeassistant"
+#define HA_STATUS_TOPIC "homeassistant/status"
+
+// Set by the SNTP task, logged from the main loop.
+volatile bool ntp_synced = false;
 // Max accepted lenghth of text to scroll.
 #define TICKER_MAX_LENGTH 200
 // Versioning pulled from git by versioning.py script.
@@ -338,7 +347,15 @@ void Iot::setup()
   prefs.begin(PREFS_NAMESPACE, true /* readOnly */);
   display_->setMaxMilliamps(prefs.getUShort(PREFS_LED_LIMIT_KEY, LED_MAX_MILLIAMPS));
   display_->setEffect(static_cast<Display::Effect>(prefs.getUChar(PREFS_EFFECT_KEY, Display::EFFECT_NONE)));
+  NightMode night;
+  if (prefs.getBytes(PREFS_NIGHT_KEY, &night, sizeof(night)) == sizeof(night))
+  {
+    night_ = night;
+  }
+  discovery_enabled_ = prefs.getBool(PREFS_DISCOVERY_KEY, false);
   prefs.end();
+
+  eventLog(String("Boot ") + AUTO_VERSION + ", reset " + resetReasonName());
 
   this->show_ampm_value_[0] = '\0';
   this->ldr_sensitivity_value_[0] = '\0';
@@ -436,6 +453,11 @@ void Iot::setup()
       DateTime now = rtc_->now();
       display_->clearMatrix();
       web_server_.send(HTTP_OK, "text/plain", "OK");
+    }
+  });
+  web_server_.on("/api/log", [this]() {
+    if (checkAPIEnabledOr403_()) {
+      web_server_.send(HTTP_OK, "text/plain", eventLogText());
     }
   });
   web_server_.on("/api/color/get", [this]() {
@@ -559,6 +581,13 @@ void Iot::loop()
     }
   }
 
+  static bool ntp_logged = false;
+  if (ntp_synced && !ntp_logged)
+  {
+    ntp_logged = true;
+    eventLog("NTP time sync");
+  }
+
   if (needs_reboot_)
   {
     DLOGLN("Rebooting after 1 second.");
@@ -577,6 +606,7 @@ void time_sync_notification_cb(struct timeval *tv)
   DLOGLN("Notification of a time synchronization event");
   if (tv->tv_sec > 0)
   {
+    ntp_synced = true;
     time_t now = tv->tv_sec;
     struct tm timeinfo;
     localtime_r(&now, &timeinfo);
@@ -692,6 +722,7 @@ void Iot::handleConfigSaved_()
 void Iot::handleWifiConnection_()
 {
   DLOGLN("Wifi connected.");
+  eventLog("WiFi connected");
   if (parseBooleanValue(boot_animation_enabled_value_) && firstWifiConnection_)
   {
     scrollText_("WiFi: " + WiFi.SSID() + " IP: " + WiFi.localIP().toString(), display_->getColor(), 150, false);
@@ -715,6 +746,7 @@ bool Iot::connectMQTT_()
   DLOGLN("Connecting to MQTT server...");
   if (!connectMqttOptions_())
   {
+    eventLog("MQTT connection failed");
     last_mqtt_connection_attempt_ = now;
     return false;
   }
@@ -728,6 +760,10 @@ bool Iot::connectMQTT_()
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/light/limit/set");
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/light/effect/set");
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/light/animation/set");
+  mqtt_client_.subscribe(mqtt_topic_prefix_ + "/night/set");
+  mqtt_client_.subscribe(mqtt_topic_prefix_ + "/discovery/set");
+  mqtt_client_.subscribe(mqtt_topic_prefix_ + "/diag/log/get");
+  mqtt_client_.subscribe(HA_STATUS_TOPIC);
 
   // Update availability.
   mqtt_client_.publish(mqtt_topic_prefix_ + "/availability", "online", true /* retained */, 0 /* QoS */);
@@ -745,6 +781,11 @@ bool Iot::connectMQTT_()
   mqtt_client_.publish(
       mqtt_topic_prefix_ + "/light/effect",
       Display::effectName(display_->getEffect()), false /* retained */, 0 /* QoS */);
+  publishNight_();
+  if (discovery_enabled_)
+  {
+    publishDiscovery_(true);
+  }
 
   return true;
 }
@@ -824,6 +865,7 @@ void Iot::mqttMessageReceived_(String &topic, String &payload)
         milliamps != display_->getMaxMilliamps())
     {
       display_->setMaxMilliamps(milliamps);
+      eventLog("LED limit set to " + String(milliamps) + " mA");
       Preferences prefs;
       prefs.begin(PREFS_NAMESPACE, false /* readOnly */);
       prefs.putUShort(PREFS_LED_LIMIT_KEY, milliamps);
@@ -875,6 +917,50 @@ void Iot::mqttMessageReceived_(String &topic, String &payload)
     if (comma < 0 || (seconds >= 1 && seconds <= 600))
     {
       display_->playAnimation(Display::animationFromName(name), seconds * 1000);
+    }
+  }
+  else if (topic == mqtt_topic_prefix_ + "/night/set")
+  {
+    if (setNightFromJson_(payload))
+    {
+      Preferences prefs;
+      prefs.begin(PREFS_NAMESPACE, false /* readOnly */);
+      prefs.putBytes(PREFS_NIGHT_KEY, &night_, sizeof(night_));
+      prefs.end();
+      eventLog("Night mode settings changed");
+    }
+    publishNight_();
+  }
+  else if (topic == mqtt_topic_prefix_ + "/discovery/set")
+  {
+    bool enabled = payload == "ON";
+    if (enabled || payload == "OFF")
+    {
+      discovery_enabled_ = enabled;
+      Preferences prefs;
+      prefs.begin(PREFS_NAMESPACE, false /* readOnly */);
+      prefs.putBool(PREFS_DISCOVERY_KEY, enabled);
+      prefs.end();
+      publishDiscovery_(enabled);
+    }
+  }
+  else if (topic == HA_STATUS_TOPIC)
+  {
+    // Home Assistant restarted: the configs are not retained, send them again.
+    if (payload == "online" && discovery_enabled_)
+    {
+      publishDiscovery_(true);
+    }
+  }
+  else if (topic == mqtt_topic_prefix_ + "/diag/log/get")
+  {
+    String log = eventLogText();
+    int start = 0;
+    while (start < log.length())
+    {
+      int end = log.indexOf('\n', start);
+      mqtt_client_.publish(mqtt_topic_prefix_ + "/diag/log", log.substring(start, end), false /* retained */, 0 /* QoS */);
+      start = end + 1;
     }
   }
   else if (topic == mqtt_topic_prefix_ + "/light/text/set")
@@ -954,5 +1040,198 @@ void Iot::scrollText_(String &text, RgbColor color, int speed, bool rightToLeft)
   } else {
     DLOG("Text length out of bounds");
     DLOGLN(text.length());
+  }
+}
+void Iot::updateNight(uint32_t secondsOfDay, uint8_t weekday)
+{
+  bool active = night_.isActive(secondsOfDay, weekday);
+  display_->setNightLevel(active ? night_.brightness : 100);
+  if (active != night_active_)
+  {
+    night_active_ = active;
+    if (mqtt_client_.connected())
+    {
+      mqtt_client_.publish(mqtt_topic_prefix_ + "/night/active", active ? "ON" : "OFF", false /* retained */, 0 /* QoS */);
+    }
+  }
+}
+
+bool Iot::setNightFromJson_(const String &payload)
+{
+  JsonDocument doc;
+  if (deserializeJson(doc, payload))
+  {
+    return false;
+  }
+  NightMode night = night_;
+  if (doc["enabled"].is<bool>())
+  {
+    night.enabled = doc["enabled"];
+  }
+  // Times as "HH:MM".
+  for (const char *key : {"start", "end"})
+  {
+    if (doc[key].is<const char *>())
+    {
+      int hour, minute;
+      if (sscanf(doc[key].as<const char *>(), "%d:%d", &hour, &minute) != 2 || hour < 0 || hour > 23 || minute < 0 || minute > 59)
+      {
+        return false;
+      }
+      (strcmp(key, "start") == 0 ? night.start : night.end) = hour * 60 + minute;
+    }
+  }
+  // Days as digits, 1 = Monday ... 7 = Sunday.
+  if (doc["days"].is<const char *>())
+  {
+    night.days = 0;
+    for (const char *day = doc["days"].as<const char *>(); *day; day++)
+    {
+      if (*day < '1' || *day > '7')
+      {
+        return false;
+      }
+      night.days |= 1 << (*day - '1');
+    }
+  }
+  if (doc["brightness"].is<int>())
+  {
+    int brightness = doc["brightness"];
+    if (brightness < 0 || brightness > 100)
+    {
+      return false;
+    }
+    night.brightness = brightness;
+  }
+  night_ = night;
+  return true;
+}
+
+void Iot::publishNight_()
+{
+  JsonDocument doc;
+  char time[6];
+  doc["enabled"] = night_.enabled;
+  snprintf(time, sizeof(time), "%02d:%02d", night_.start / 60, night_.start % 60);
+  doc["start"] = time;
+  snprintf(time, sizeof(time), "%02d:%02d", night_.end / 60, night_.end % 60);
+  doc["end"] = time;
+  String days;
+  for (int day = 0; day < 7; day++)
+  {
+    if (night_.days & (1 << day))
+    {
+      days += char('1' + day);
+    }
+  }
+  doc["days"] = days;
+  doc["brightness"] = night_.brightness;
+  String payload;
+  serializeJson(doc, payload);
+  mqtt_client_.publish(mqtt_topic_prefix_ + "/night", payload, false /* retained */, 0 /* QoS */);
+  mqtt_client_.publish(mqtt_topic_prefix_ + "/night/active", night_active_ ? "ON" : "OFF", false /* retained */, 0 /* QoS */);
+}
+
+void Iot::publishDiscovery_(bool enabled)
+{
+  String mac = WiFi.macAddress();
+  mac.replace(":", "");
+  mac.toLowerCase();
+  const String id = "wordclock_" + mac;
+
+  // One entry per entity: component, object id, then extra config.
+  struct Entity
+  {
+    const char *component;
+    const char *object;
+  };
+  const Entity entities[] = {
+      {"light", "light"},
+      {"sensor", "ldr"},
+      {"sensor", "uptime"},
+      {"sensor", "reset_reason"},
+      {"sensor", "led_limit"},
+      {"binary_sensor", "night"},
+  };
+
+  for (const Entity &entity : entities)
+  {
+    String topic = String(HA_DISCOVERY_PREFIX) + "/" + entity.component + "/" + id + "/" + entity.object + "/config";
+    if (!enabled)
+    {
+      // An empty config removes the entity from Home Assistant.
+      mqtt_client_.publish(topic, "", false /* retained */, 0 /* QoS */);
+      continue;
+    }
+
+    JsonDocument doc;
+    doc["~"] = mqtt_topic_prefix_;
+    doc["uniq_id"] = id + "_" + entity.object;
+    doc["avty_t"] = "~/availability";
+    JsonObject device = doc["dev"].to<JsonObject>();
+    device["ids"].add(id);
+    device["name"] = "Wordclock";
+    device["mdl"] = "Wordclock";
+    device["sw"] = AUTO_VERSION;
+
+    String object = entity.object;
+    if (object == "light")
+    {
+      doc["name"] = nullptr; // Named after the device.
+      doc["obj_id"] = "wordclock";
+      doc["stat_t"] = "~/light/switch";
+      doc["cmd_t"] = "~/light/switch/set";
+      doc["rgb_stat_t"] = "~/light/color";
+      doc["rgb_cmd_t"] = "~/light/color/set";
+      doc["fx_stat_t"] = "~/light/effect";
+      doc["fx_cmd_t"] = "~/light/effect/set";
+      JsonArray effects = doc["fx_list"].to<JsonArray>();
+      for (int effect = 0; effect < Display::EFFECT_COUNT; effect++)
+      {
+        effects.add(Display::effectName(static_cast<Display::Effect>(effect)));
+      }
+      for (int animation = 0; animation < Display::ANIMATION_COUNT; animation++)
+      {
+        effects.add(Display::animationName(static_cast<Display::Animation>(animation)));
+      }
+    }
+    else if (object == "ldr")
+    {
+      doc["name"] = "Light sensor";
+      doc["stat_t"] = "~/sensor/ldr";
+      doc["stat_cla"] = "measurement";
+      doc["ent_cat"] = "diagnostic";
+    }
+    else if (object == "uptime")
+    {
+      doc["name"] = "Uptime";
+      doc["stat_t"] = "~/diag/uptime";
+      doc["dev_cla"] = "duration";
+      doc["unit_of_meas"] = "s";
+      doc["ent_cat"] = "diagnostic";
+    }
+    else if (object == "reset_reason")
+    {
+      doc["name"] = "Last reset";
+      doc["stat_t"] = "~/diag/reset_reason";
+      doc["ent_cat"] = "diagnostic";
+    }
+    else if (object == "led_limit")
+    {
+      doc["name"] = "LED limit";
+      doc["stat_t"] = "~/light/limit";
+      doc["dev_cla"] = "current";
+      doc["unit_of_meas"] = "mA";
+      doc["ent_cat"] = "diagnostic";
+    }
+    else if (object == "night")
+    {
+      doc["name"] = "Night mode";
+      doc["stat_t"] = "~/night/active";
+    }
+
+    String payload;
+    serializeJson(doc, payload);
+    mqtt_client_.publish(topic, payload, false /* retained */, 0 /* QoS */);
   }
 }

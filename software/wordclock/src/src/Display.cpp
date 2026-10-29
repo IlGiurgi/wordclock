@@ -89,8 +89,20 @@ void Display::_show()
     channelSum += color.R + color.G + color.B;
   }
 
+  // Frames are sent scaled by numerator / denominator.
   const uint32_t channelBudget = (uint32_t)_maxMilliamps * 255 / LED_CHANNEL_MILLIAMPS;
-  if (channelSum <= channelBudget)
+  uint32_t numerator = 1, denominator = 1;
+  if (channelSum > channelBudget)
+  {
+    numerator = channelBudget;
+    denominator = channelSum;
+  }
+  if (_nightPercent < 100)
+  {
+    numerator *= _nightPercent;
+    denominator *= 100;
+  }
+  if (numerator == denominator)
   {
     _pixels.Show();
     return;
@@ -103,9 +115,9 @@ void Display::_show()
   {
     RgbColor color = _pixels.GetPixelColor(index);
     unscaled[index] = color;
-    _pixels.SetPixelColor(index, RgbColor(color.R * channelBudget / channelSum,
-                                          color.G * channelBudget / channelSum,
-                                          color.B * channelBudget / channelSum));
+    _pixels.SetPixelColor(index, RgbColor(color.R * numerator / denominator,
+                                          color.G * numerator / denominator,
+                                          color.B * numerator / denominator));
   }
   _pixels.Show();
   for (uint16_t index = 0; index < count; index++)
@@ -114,6 +126,16 @@ void Display::_show()
   }
   // The LEDs already show this frame, scaled.
   _pixels.ResetDirty();
+}
+
+void Display::setNightLevel(uint8_t percent)
+{
+  percent = min(percent, (uint8_t)100);
+  if (percent != _nightPercent)
+  {
+    _nightPercent = percent;
+    _pixels.Dirty(); // Resend the current frame at the new level.
+  }
 }
 
 void Display::setMaxMilliamps(uint16_t milliamps)

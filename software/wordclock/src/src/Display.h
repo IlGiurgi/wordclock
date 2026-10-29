@@ -115,12 +115,16 @@ public:
   // Returns ANIMATION_COUNT for an unknown name.
   static Animation animationFromName(const String &name);
 
+  // Brightness of the night mode in percent, 100 when it is not active.
+  void setNightLevel(uint8_t percent);
+
   // Current budget for the LEDs, in mA.
   void setMaxMilliamps(uint16_t milliamps);
   uint16_t getMaxMilliamps() { return _maxMilliamps; }
 
 private:
-  // Sends the pixels to the LEDs, dimmed to stay within _maxMilliamps.
+  // Sends the pixels to the LEDs, dimmed to stay within _maxMilliamps and
+  // for the night mode.
   void _show();
 
   // Fills _pixelColumn for the current clock face.
@@ -157,6 +161,9 @@ private:
   
   // Current budget for the LEDs, in mA.
   uint16_t _maxMilliamps = LED_MAX_MILLIAMPS;
+
+  // Night mode brightness in percent.
+  uint8_t _nightPercent = 100;
 
   Effect _effect = EFFECT_NONE;
   unsigned long _effectFrameMs = 0;

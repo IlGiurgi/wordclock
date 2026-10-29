@@ -118,6 +118,9 @@ Topics are prefixed with the name defined as `Clock name` in the web UI settings
 - `wordclock/light/switch` -> current state of the display `ON` or `OFF`
 - `wordclock/light/limit` -> current LED current budget in mA (not retained)
 - `wordclock/light/effect` -> current lighting effect (not retained)
+- `wordclock/night` -> night mode settings as JSON, see `wordclock/night/set` (not retained)
+- `wordclock/night/active` -> `ON` while the night mode dims the display, else `OFF` (not retained)
+- `wordclock/diag/log` -> one line per event of the event log, sent after `wordclock/diag/log/get` (not retained)
 - `wordclock/diag/reset_reason` -> reason of the last reset (`POWERON`, `SOFTWARE`, `BROWNOUT`, `PANIC`, `TASK_WATCHDOG`...), refreshes every 15 seconds (not retained)
 - `wordclock/diag/uptime` -> seconds since boot, refreshes every 15 seconds (not retained)
 
@@ -143,6 +146,13 @@ Topics are prefixed with the name defined as `Clock name` in the web UI settings
   - `pacman`: Pac-Man eating dots
   - `ghost`: Pac-Man ghosts floating across the screen in random directions, speeds and colors
   - `sunrise`: stars fade out while the sky turns from night to day and the sun rises (20 s, then 10 s of daylight)
+
+- `wordclock/night/set` -> night mode, a JSON object where every field is optional: `{"enabled": true, "start": "23:00", "end": "06:30", "days": "1234567", "brightness": 0}`. During the slot the display runs at `brightness` percent (0 switches it off). The slot may span midnight; `days` lists the days it starts on, 1 = Monday ... 7 = Sunday. Runs on the clock, without Home Assistant, and is saved across reboots.
+- `wordclock/discovery/set` -> `ON` publishes [Home Assistant MQTT discovery](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery) configs for the light (with all effects), the light sensor, uptime, last reset, LED limit and night mode, so no YAML is needed. `OFF` removes them. Saved across reboots. The configs are not retained: they are sent again when the clock connects and when Home Assistant announces itself on `homeassistant/status`. Remove a YAML light first to avoid duplicates.
+- `wordclock/diag/log/get` -> publishes the event log on `wordclock/diag/log`
+
+#### Event log
+The clock keeps its last 20 events (boot and reset reason, WiFi, MQTT and NTP, RTC read errors, LED limit and night mode changes) in flash, so they survive resets. Read them at `http://<clock ip>/api/log` (needs the API toggle) or over MQTT.
 
 #### Matrix paint (experimental)
 - `wordclock/light/matrix/set` -> activates Paint mode and displays the payload, a 110 characters string using a preset palette, see [Paint](#paint)
