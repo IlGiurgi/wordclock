@@ -105,6 +105,8 @@ private:
 
   // Timestamp of last MQTT push.
   unsigned long last_mqtt_report_ = 0;
+  // Whether an animation was playing, to report the effect again when it ends.
+  bool animating_ = false;
 
   // MQTT topic prefix, derived from the clock name defined in the web UI.
   String mqtt_topic_prefix_;

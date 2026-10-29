@@ -523,6 +523,14 @@ void Iot::loop()
       {
         if (mqtt_client_.connected())
         {
+          bool animating = display_->getMode() == Display::Mode::ANIMATION;
+          if (animating_ && !animating)
+          {
+            mqtt_client_.publish(
+                mqtt_topic_prefix_ + "/light/effect",
+                Display::effectName(display_->getEffect()), false /* retained */, 0 /* QoS */);
+          }
+          animating_ = animating;
           unsigned long now = millis();
           if (MQTT_LDR_PUBLISH_INTERVAL < now - last_mqtt_report_)
           {
@@ -827,6 +835,18 @@ void Iot::mqttMessageReceived_(String &topic, String &payload)
   }
   else if (topic == mqtt_topic_prefix_ + "/light/effect/set")
   {
+    // Animations play once, then the effect state goes back to the current
+    // effect (see loop()).
+    Display::Animation animation = Display::animationFromName(payload);
+    if (animation != Display::ANIMATION_COUNT)
+    {
+      display_->playAnimation(animation);
+      animating_ = true;
+      mqtt_client_.publish(
+          mqtt_topic_prefix_ + "/light/effect",
+          Display::animationName(animation), false /* retained */, 0 /* QoS */);
+      return;
+    }
     Display::Effect effect = Display::effectFromName(payload);
     if (effect != Display::EFFECT_COUNT && effect != display_->getEffect())
     {
@@ -851,8 +871,8 @@ void Iot::mqttMessageReceived_(String &topic, String &payload)
       display_->stopAnimation();
       return;
     }
-    long seconds = comma < 0 ? ANIMATION_DURATION / 1000 : payload.substring(comma + 1).toInt();
-    if (seconds >= 1 && seconds <= 600)
+    long seconds = comma < 0 ? 0 /* default length */ : payload.substring(comma + 1).toInt();
+    if (comma < 0 || (seconds >= 1 && seconds <= 600))
     {
       display_->playAnimation(Display::animationFromName(name), seconds * 1000);
     }

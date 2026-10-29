@@ -28,7 +28,7 @@ void Display::loop()
     _bootAnimations.UpdateAnimations();
   } else if (_mode == ANIMATION) {
     unsigned long elapsed = millis() - _animationStartMs;
-    if (_animationDurationMs > 0 && elapsed >= _animationDurationMs) {
+    if (elapsed >= _animationDurationMs) {
       stopAnimation();
     } else if (millis() - _animationFrameMs >= EFFECT_FRAME_INTERVAL) {
       _animationFrameMs = millis();
@@ -57,12 +57,7 @@ void Display::loop()
       }
   } else {
     _animations.UpdateAnimations();
-    if (_effect >= EFFECT_HEART && !_off)
-    {
-      // Back to the clock after a boot, a timed animation or the text scroller.
-      playAnimation(static_cast<Animation>(_effect - EFFECT_HEART), 0);
-    }
-    else if (_effect != EFFECT_NONE && !_off && !_animations.IsAnimating() &&
+    if (_effect != EFFECT_NONE && !_off && !_animations.IsAnimating() &&
         millis() - _effectFrameMs >= EFFECT_FRAME_INTERVAL)
     {
       _effectFrameMs = millis();
@@ -193,10 +188,8 @@ const char *Display::effectName(Effect effect)
     return "colorloop";
   case EFFECT_BREATHE:
     return "breathe";
-  case EFFECT_NONE:
-    return "none";
   default:
-    return animationName(static_cast<Animation>(effect - EFFECT_HEART));
+    return "none";
   }
 }
 
@@ -221,12 +214,8 @@ void Display::setEffect(Effect effect)
   DLOG("Effect: ");
   DLOGLN(effectName(effect));
   _effect = effect;
-  // The loop starts the animation of an animated effect.
-  if (_mode == ANIMATION)
-  {
-    stopAnimation();
-  }
-  else
+  // A playing animation returns to the clock with the new effect.
+  if (_mode == CLOCK)
   {
     _update();
   }
@@ -405,7 +394,9 @@ void Display::playAnimation(Animation animation, unsigned long durationMs)
   _mode = ANIMATION;
   _animation = animation;
   _animationStartMs = millis();
-  _animationDurationMs = durationMs;
+  _animationDurationMs = durationMs > 0 ? durationMs
+                         : animation == ANIMATION_SUNRISE ? SUNRISE_DURATION
+                                                          : ANIMATION_DURATION;
   _animationFrameMs = 0;
   _particles.clear();
   _burstRadius = -1;

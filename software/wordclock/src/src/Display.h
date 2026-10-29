@@ -24,6 +24,8 @@
 
 // Default duration of a full screen animation, in ms.
 #define ANIMATION_DURATION 10000
+// The sunrise needs longer to rise and show the day.
+#define SUNRISE_DURATION 25000
 
 // Frame interval of the lighting effects and animations, in ms.
 #define EFFECT_FRAME_INTERVAL 40
@@ -80,18 +82,6 @@ public:
     EFFECT_RAINBOW,   // Hue wave moving across the columns.
     EFFECT_COLORLOOP, // All letters slowly cycle through the hues.
     EFFECT_BREATHE,   // The color slowly pulses between 25% and 100%.
-    // The full screen animations below, played until another effect is set.
-    EFFECT_HEART,
-    EFFECT_SMILE,
-    EFFECT_STAR,
-    EFFECT_MATRIX,
-    EFFECT_FIREWORKS,
-    EFFECT_SNOW,
-    EFFECT_BOOT,
-    EFFECT_RAIN,
-    EFFECT_PACMAN,
-    EFFECT_GHOST,
-    EFFECT_SUNRISE,
     EFFECT_COUNT
   };
   void setEffect(Effect effect);
@@ -115,10 +105,10 @@ public:
     ANIMATION_SUNRISE,   // Sky warming up from the bottom while the sun rises.
     ANIMATION_COUNT
   };
-  // Plays an animation, then returns to the clock (0 plays it until
-  // stopped). Ignored when the display is off or not showing the time. The
-  // boot animation always plays once, about 9 s.
-  void playAnimation(Animation animation, unsigned long durationMs = ANIMATION_DURATION);
+  // Plays an animation, then returns to the clock (0 uses the animation's
+  // default length). Ignored when the display is off or not showing the time.
+  // The boot animation always plays once, about 9 s.
+  void playAnimation(Animation animation, unsigned long durationMs = 0);
   // Returns to the clock if an animation is playing.
   void stopAnimation();
   static const char *animationName(Animation animation);
