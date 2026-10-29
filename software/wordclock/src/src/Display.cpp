@@ -28,7 +28,7 @@ void Display::loop()
     _bootAnimations.UpdateAnimations();
   } else if (_mode == ANIMATION) {
     unsigned long elapsed = millis() - _animationStartMs;
-    if (elapsed >= _animationDurationMs) {
+    if (_animationDurationMs > 0 && elapsed >= _animationDurationMs) {
       stopAnimation();
     } else if (millis() - _animationFrameMs >= EFFECT_FRAME_INTERVAL) {
       _animationFrameMs = millis();
@@ -57,7 +57,12 @@ void Display::loop()
       }
   } else {
     _animations.UpdateAnimations();
-    if (_effect != EFFECT_NONE && !_off && !_animations.IsAnimating() &&
+    if (_effect >= EFFECT_HEART && !_off)
+    {
+      // Back to the clock after a boot, a timed animation or the text scroller.
+      playAnimation(static_cast<Animation>(_effect - EFFECT_HEART), 0);
+    }
+    else if (_effect != EFFECT_NONE && !_off && !_animations.IsAnimating() &&
         millis() - _effectFrameMs >= EFFECT_FRAME_INTERVAL)
     {
       _effectFrameMs = millis();
@@ -188,8 +193,10 @@ const char *Display::effectName(Effect effect)
     return "colorloop";
   case EFFECT_BREATHE:
     return "breathe";
-  default:
+  case EFFECT_NONE:
     return "none";
+  default:
+    return animationName(static_cast<Animation>(effect - EFFECT_HEART));
   }
 }
 
@@ -214,7 +221,15 @@ void Display::setEffect(Effect effect)
   DLOG("Effect: ");
   DLOGLN(effectName(effect));
   _effect = effect;
-  _update();
+  // The loop starts the animation of an animated effect.
+  if (_mode == ANIMATION)
+  {
+    stopAnimation();
+  }
+  else
+  {
+    _update();
+  }
 }
 
 void Display::_mapColumns()

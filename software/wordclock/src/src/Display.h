@@ -80,6 +80,13 @@ public:
     EFFECT_RAINBOW,   // Hue wave moving across the columns.
     EFFECT_COLORLOOP, // All letters slowly cycle through the hues.
     EFFECT_BREATHE,   // The color slowly pulses between 25% and 100%.
+    // The full screen animations below, played until another effect is set.
+    EFFECT_HEART,
+    EFFECT_SMILE,
+    EFFECT_STAR,
+    EFFECT_MATRIX,
+    EFFECT_FIREWORKS,
+    EFFECT_SNOW,
     EFFECT_COUNT
   };
   void setEffect(Effect effect);
@@ -98,8 +105,8 @@ public:
     ANIMATION_SNOW,      // Falling snowflakes.
     ANIMATION_COUNT
   };
-  // Plays an animation, then returns to the clock. Ignored when the display
-  // is off or not showing the time.
+  // Plays an animation, then returns to the clock (0 plays it until
+  // stopped). Ignored when the display is off or not showing the time.
   void playAnimation(Animation animation, unsigned long durationMs = ANIMATION_DURATION);
   // Returns to the clock if an animation is playing.
   void stopAnimation();

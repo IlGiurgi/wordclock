@@ -130,7 +130,8 @@ Topics are prefixed with the name defined as `Clock name` in the web UI settings
   - `rainbow`: a rainbow wave moving across the columns
   - `colorloop`: all letters slowly cycle through the hues (one minute per cycle)
   - `breathe`: the chosen color slowly pulses between 25% and 100%
-- `wordclock/light/animation/set` -> plays a full screen animation instead of the time, then returns to the clock. Payload is the animation name, optionally followed by `,<seconds>` (1-600, default 10), e.g. `heart` or `fireworks,30`. `stop` returns to the clock right away. Do not retain this message, or the animation replays on every reconnection.
+  - `heart`, `smile`, `star`, `matrix`, `fireworks`, `snow`: the full screen animations below, played until another effect is set (the time is hidden meanwhile)
+- `wordclock/light/animation/set` -> plays a full screen animation instead of the time, then returns to the clock. Payload is the animation name, optionally followed by `,<seconds>` (1-600, default 10), e.g. `heart` or `fireworks,30`. `stop` returns to the clock right away (or to the animated effect, if one is set). Do not retain this message, or the animation replays on every reconnection.
   - `heart`: beating red heart
   - `smile`: winking yellow smiley
   - `star`: twinkling golden star
@@ -160,7 +161,7 @@ mqtt:
         rgb_command_topic: "wordclock/light/color/set"
         effect_state_topic: "wordclock/light/effect"
         effect_command_topic: "wordclock/light/effect/set"
-        effect_list: ["none", "rainbow", "colorloop", "breathe"]
+        effect_list: ["none", "rainbow", "colorloop", "breathe", "heart", "smile", "star", "matrix", "fireworks", "snow"]
         qos: 0
         optimistic: false
   button:
