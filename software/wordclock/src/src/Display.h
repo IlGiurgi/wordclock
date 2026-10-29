@@ -88,6 +88,10 @@ public:
     EFFECT_FIREWORKS,
     EFFECT_SNOW,
     EFFECT_BOOT,
+    EFFECT_RAIN,
+    EFFECT_PACMAN,
+    EFFECT_GHOST,
+    EFFECT_SUNRISE,
     EFFECT_COUNT
   };
   void setEffect(Effect effect);
@@ -105,6 +109,10 @@ public:
     ANIMATION_FIREWORKS, // Rockets bursting in random colors.
     ANIMATION_SNOW,      // Falling snowflakes.
     ANIMATION_BOOT,      // Red, green and blue rings of the boot animation.
+    ANIMATION_RAIN,      // Blue raindrops.
+    ANIMATION_PACMAN,    // Pac-Man eating dots.
+    ANIMATION_GHOST,     // Pac-Man ghost crossing the screen.
+    ANIMATION_SUNRISE,   // Sky warming up from the bottom while the sun rises.
     ANIMATION_COUNT
   };
   // Plays an animation, then returns to the clock (0 plays it until

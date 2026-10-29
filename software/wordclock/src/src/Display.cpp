@@ -335,6 +335,19 @@ const char *const kStar[NEOPIXEL_ROWS] = {
     "..XXX.XXX..",
     ".XX.....XX.",
     "XX.......XX"};
+
+// 7x8 ghost, the last row alternates to make it wiggle. 'W' is the white of
+// the eyes, 'B' the pupils.
+const char *const kGhost[] = {
+    "..XXX..",
+    ".XXXXX.",
+    "XWWXWWX",
+    "XWBXWBX",
+    "XXXXXXX",
+    "XXXXXXX",
+    "XXXXXXX",
+    "X.X.X.X",
+    ".X.X.X."};
 } // namespace
 
 const char *Display::animationName(Animation animation)
@@ -355,6 +368,14 @@ const char *Display::animationName(Animation animation)
     return "snow";
   case ANIMATION_BOOT:
     return "boot";
+  case ANIMATION_RAIN:
+    return "rain";
+  case ANIMATION_PACMAN:
+    return "pacman";
+  case ANIMATION_GHOST:
+    return "ghost";
+  case ANIMATION_SUNRISE:
+    return "sunrise";
   default:
     return "";
   }
@@ -549,6 +570,103 @@ void Display::_renderAnimation(unsigned long elapsedMs)
     int radius = NeoEase::QuarticOut((elapsedMs % 3000) / 3000.0f) * 15;
     RgbColor color = hsb(ring.hue, 1, 0.5f);
     _circle(ring.x, ring.y, radius, color);
+    break;
+  }
+  case ANIMATION_RAIN:
+  {
+    _fadeAll(90);
+    if (_particles.size() < 10 && random(2) == 0)
+    {
+      _particles.push_back({static_cast<float>(random(NEOPIXEL_COLUMNS)), 0, random(40, 70) / 100.0f, 0});
+    }
+    for (auto it = _particles.begin(); it != _particles.end();)
+    {
+      _setGridPixel(it->x, it->y, hsb(0.6f, 0.8f, 1));
+      it->y += it->speed;
+      it = it->y >= NEOPIXEL_ROWS ? _particles.erase(it) : it + 1;
+    }
+    break;
+  }
+  case ANIMATION_PACMAN:
+  {
+    // Crosses the screen every 4 s, chomping every 200 ms.
+    float centerX = -4 + (elapsedMs % 4000) / 4000.0f * (NEOPIXEL_COLUMNS + 8);
+    const float centerY = 4.5f;
+    bool open = (elapsedMs / 200) % 2 == 0;
+    _pixels.ClearTo(black);
+    for (int x = 0; x < NEOPIXEL_COLUMNS; x += 2)
+    {
+      if (x > centerX + 2)
+      {
+        _setGridPixel(x, 4, hsb(0.08f, 0.3f, 0.6f));
+        _setGridPixel(x, 5, hsb(0.08f, 0.3f, 0.6f));
+      }
+    }
+    for (int y = 0; y < NEOPIXEL_ROWS; y++)
+    {
+      for (int x = 0; x < NEOPIXEL_COLUMNS; x++)
+      {
+        float dx = x - centerX, dy = y - centerY;
+        bool inMouth = open && dx > 0 && fabsf(dy) < dx * 0.9f;
+        if (dx * dx + dy * dy <= 12.5f && !inMouth)
+        {
+          _setGridPixel(x, y, hsb(0.15f, 1, 1));
+        }
+      }
+    }
+    break;
+  }
+  case ANIMATION_GHOST:
+  {
+    // Crosses the screen every 4 s, with a new color on every pass.
+    static const float kHues[] = {0, 0.9f, 0.5f, 0.08f};
+    float hue = kHues[(elapsedMs / 4000) % 4];
+    int left = -7 + static_cast<int>((elapsedMs % 4000) * (NEOPIXEL_COLUMNS + 7) / 4000);
+    bool wiggle = (elapsedMs / 250) % 2 == 0;
+    _pixels.ClearTo(black);
+    for (int row = 0; row < 8; row++)
+    {
+      const char *line = kGhost[row == 7 && wiggle ? 8 : row];
+      for (int col = 0; col < 7; col++)
+      {
+        RgbColor color = line[col] == 'X'   ? hsb(hue, 1, 1)
+                         : line[col] == 'W' ? hsb(0, 0, 1)
+                         : line[col] == 'B' ? hsb(0.66f, 1, 1)
+                                            : black;
+        if (line[col] != '.')
+        {
+          _setGridPixel(left + col, row + 1, color);
+        }
+      }
+    }
+    break;
+  }
+  case ANIMATION_SUNRISE:
+  {
+    // 20 s of sunrise, then the full sky stays for 10 s before restarting.
+    float progress = min((elapsedMs % 30000) / 20000.0f, 1.0f);
+    for (int y = 0; y < NEOPIXEL_ROWS; y++)
+    {
+      float height = static_cast<float>(NEOPIXEL_ROWS - 1 - y) / (NEOPIXEL_ROWS - 1);
+      // Deep red near the horizon, orange then pale yellow higher up.
+      float light = constrain((progress * 1.4f - height) * 2, 0.0f, 1.0f);
+      for (int x = 0; x < NEOPIXEL_COLUMNS; x++)
+      {
+        _setGridPixel(x, y, hsb(0.02f + 0.12f * progress * (1 - height), 1 - 0.3f * progress, light * (0.3f + 0.4f * progress)));
+      }
+    }
+    // The sun rises from below the bottom row.
+    float sunY = NEOPIXEL_ROWS + 2 - progress * 8;
+    for (int y = 0; y < NEOPIXEL_ROWS; y++)
+    {
+      for (int x = 0; x < NEOPIXEL_COLUMNS; x++)
+      {
+        if ((x - 5) * (x - 5) + (y - sunY) * (y - sunY) <= 5.5f)
+        {
+          _setGridPixel(x, y, hsb(0.1f + 0.05f * progress, 0.9f - 0.5f * progress, 1));
+        }
+      }
+    }
     break;
   }
   default:
