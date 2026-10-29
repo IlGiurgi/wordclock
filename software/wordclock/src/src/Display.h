@@ -116,7 +116,8 @@ public:
     ANIMATION_COUNT
   };
   // Plays an animation, then returns to the clock (0 plays it until
-  // stopped). Ignored when the display is off or not showing the time.
+  // stopped). Ignored when the display is off or not showing the time. The
+  // boot animation always plays once, about 9 s.
   void playAnimation(Animation animation, unsigned long durationMs = ANIMATION_DURATION);
   // Returns to the clock if an animation is playing.
   void stopAnimation();

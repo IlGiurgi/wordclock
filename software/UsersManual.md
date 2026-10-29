@@ -138,11 +138,11 @@ Topics are prefixed with the name defined as `Clock name` in the web UI settings
   - `matrix`: green falling code
   - `fireworks`: rockets bursting in random colors
   - `snow`: falling snowflakes
-  - `boot`: the red, green and blue rings of the boot animation
+  - `boot`: the boot animation with its red, green and blue rings (always about 9 seconds)
   - `rain`: blue raindrops
   - `pacman`: Pac-Man eating dots
-  - `ghost`: a Pac-Man ghost crossing the screen
-  - `sunrise`: the sky warms up from the bottom while the sun rises (20 s, then 10 s of daylight)
+  - `ghost`: Pac-Man ghosts floating across the screen in random directions, speeds and colors
+  - `sunrise`: stars fade out while the sky turns from night to day and the sun rises (20 s, then 10 s of daylight)
 
 #### Matrix paint (experimental)
 - `wordclock/light/matrix/set` -> activates Paint mode and displays the payload, a 110 characters string using a preset palette, see [Paint](#paint)

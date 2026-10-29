@@ -410,6 +410,11 @@ void Display::playAnimation(Animation animation, unsigned long durationMs)
   _particles.clear();
   _burstRadius = -1;
   _pixels.ClearTo(black);
+  if (animation == ANIMATION_BOOT)
+  {
+    // The real thing, which returns to the clock when done.
+    runBootAnimation();
+  }
 }
 
 void Display::stopAnimation()
@@ -557,21 +562,6 @@ void Display::_renderAnimation(unsigned long elapsedMs)
     }
     break;
   }
-  case ANIMATION_BOOT:
-  {
-    // Same rings as runBootAnimation(), 3 s each, in a loop.
-    static const struct
-    {
-      uint16_t x, y;
-      float hue;
-    } kRings[] = {{5, 10, 0}, {0, 5, 0.33f}, {10, 5, 0.67f}};
-    const auto &ring = kRings[(elapsedMs / 3000) % 3];
-    _fadeAll(10);
-    int radius = NeoEase::QuarticOut((elapsedMs % 3000) / 3000.0f) * 15;
-    RgbColor color = hsb(ring.hue, 1, 0.5f);
-    _circle(ring.x, ring.y, radius, color);
-    break;
-  }
   case ANIMATION_RAIN:
   {
     _fadeAll(90);
@@ -618,53 +608,75 @@ void Display::_renderAnimation(unsigned long elapsedMs)
   }
   case ANIMATION_GHOST:
   {
-    // Crosses the screen every 4 s, with a new color on every pass.
+    // Up to two ghosts in the classic colors, each with its own direction,
+    // speed and height, floating up and down.
     static const float kHues[] = {0, 0.9f, 0.5f, 0.08f};
-    float hue = kHues[(elapsedMs / 4000) % 4];
-    int left = -7 + static_cast<int>((elapsedMs % 4000) * (NEOPIXEL_COLUMNS + 7) / 4000);
-    bool wiggle = (elapsedMs / 250) % 2 == 0;
-    _pixels.ClearTo(black);
-    for (int row = 0; row < 8; row++)
+    if (_particles.size() < 2 && random(30) == 0)
     {
-      const char *line = kGhost[row == 7 && wiggle ? 8 : row];
-      for (int col = 0; col < 7; col++)
+      bool toRight = random(2) == 0;
+      float speed = random(8, 25) / 100.0f;
+      _particles.push_back({toRight ? -7.0f : static_cast<float>(NEOPIXEL_COLUMNS), static_cast<float>(random(0, 3)),
+                            toRight ? speed : -speed, kHues[random(4)]});
+    }
+    _pixels.ClearTo(black);
+    bool wiggle = (elapsedMs / 250) % 2 == 0;
+    for (auto it = _particles.begin(); it != _particles.end();)
+    {
+      int left = roundf(it->x);
+      int top = roundf(it->y + 0.6f * sinf(elapsedMs / 400.0f + it->hue * 10));
+      for (int row = 0; row < 8; row++)
       {
-        RgbColor color = line[col] == 'X'   ? hsb(hue, 1, 1)
-                         : line[col] == 'W' ? hsb(0, 0, 1)
-                         : line[col] == 'B' ? hsb(0.66f, 1, 1)
-                                            : black;
-        if (line[col] != '.')
+        const char *line = kGhost[row == 7 && wiggle ? 8 : row];
+        for (int col = 0; col < 7; col++)
         {
-          _setGridPixel(left + col, row + 1, color);
+          char c = line[col];
+          // The pupils look where the ghost is going.
+          if (it->speed < 0 && row == 3 && (col == 1 || col == 4))
+            c = 'B';
+          else if (it->speed < 0 && row == 3 && (col == 2 || col == 5))
+            c = 'W';
+          if (c == '.')
+            continue;
+          _setGridPixel(left + col, top + row, c == 'X' ? hsb(it->hue, 1, 1) : c == 'W' ? hsb(0, 0, 1) : hsb(0.66f, 1, 1));
         }
       }
+      it->x += it->speed;
+      // Sometimes turn around.
+      if (random(150) == 0)
+        it->speed = -it->speed;
+      bool gone = it->x < -8 || it->x > NEOPIXEL_COLUMNS + 1;
+      it = gone ? _particles.erase(it) : it + 1;
     }
     break;
   }
   case ANIMATION_SUNRISE:
   {
-    // 20 s of sunrise, then the full sky stays for 10 s before restarting.
+    // 20 s from night to day, then daylight for 10 s before starting again.
     float progress = min((elapsedMs % 30000) / 20000.0f, 1.0f);
+    // Sky colors at the top and at the horizon, from night to day.
+    RgbColor top = RgbColor::LinearBlend(RgbColor(0, 0, 40), RgbColor(40, 110, 255), progress);
+    RgbColor horizon = progress < 0.5f
+                           ? RgbColor::LinearBlend(RgbColor(40, 0, 10), RgbColor(255, 70, 0), progress * 2)
+                           : RgbColor::LinearBlend(RgbColor(255, 70, 0), RgbColor(255, 190, 110), progress * 2 - 1);
+    RgbColor sun = RgbColor::LinearBlend(RgbColor(255, 40, 0), RgbColor(255, 230, 150), progress);
+    float sunY = NEOPIXEL_ROWS + 2 - progress * 8.5f;
+    const uint8_t dim = brightness * 255;
     for (int y = 0; y < NEOPIXEL_ROWS; y++)
     {
       float height = static_cast<float>(NEOPIXEL_ROWS - 1 - y) / (NEOPIXEL_ROWS - 1);
-      // Deep red near the horizon, orange then pale yellow higher up.
-      float light = constrain((progress * 1.4f - height) * 2, 0.0f, 1.0f);
+      RgbColor sky = RgbColor::LinearBlend(horizon, top, powf(height, 0.6f));
       for (int x = 0; x < NEOPIXEL_COLUMNS; x++)
       {
-        _setGridPixel(x, y, hsb(0.02f + 0.12f * progress * (1 - height), 1 - 0.3f * progress, light * (0.3f + 0.4f * progress)));
-      }
-    }
-    // The sun rises from below the bottom row.
-    float sunY = NEOPIXEL_ROWS + 2 - progress * 8;
-    for (int y = 0; y < NEOPIXEL_ROWS; y++)
-    {
-      for (int x = 0; x < NEOPIXEL_COLUMNS; x++)
-      {
-        if ((x - 5) * (x - 5) + (y - sunY) * (y - sunY) <= 5.5f)
-        {
-          _setGridPixel(x, y, hsb(0.1f + 0.05f * progress, 0.9f - 0.5f * progress, 1));
-        }
+        RgbColor color = sky;
+        // A few stars fading away at the top.
+        if (y < 4 && (x * 7 + y * 3) % 11 == 0 && progress < 0.4f)
+          color = RgbColor::LinearBlend(RgbColor(180, 180, 255), sky, progress / 0.4f);
+        float sunDistance = sqrtf((x - 5) * (x - 5) + (y - sunY) * (y - sunY));
+        if (sunDistance <= 2.3f)
+          color = sun;
+        else if (sunDistance <= 3.5f)
+          color = RgbColor::LinearBlend(color, sun, 0.5f * (3.5f - sunDistance) / 1.2f);
+        _setGridPixel(x, y, color.Dim(dim));
       }
     }
     break;
@@ -778,6 +790,7 @@ void Display::runBootAnimation()
 {
     DLOGLN("Starting boot animation");
     _mode = BOOT;
+    _circleCount = 0;
     DLOGLN("Testing red");
     _circleCenterX = 5;
     _circleCenterY = 10;
