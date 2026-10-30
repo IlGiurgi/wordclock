@@ -36,6 +36,9 @@
 #define NTP_SERVER "pool.ntp.org"
 // LDR MQTT topic publish interval in ms.
 #define MQTT_LDR_PUBLISH_INTERVAL 15000
+// Delay between MQTT connection attempts in ms, doubled after each failure.
+#define MQTT_RETRY_MIN_DELAY 1000
+#define MQTT_RETRY_MAX_DELAY 60000
 // Accepted range for the LED current budget set over MQTT, in mA.
 #define LED_LIMIT_MIN_MILLIAMPS 50
 #define LED_LIMIT_MAX_MILLIAMPS 3000
@@ -450,7 +453,6 @@ void Iot::setup()
   });
   web_server_.on("/api/matrix/unset", [this]() {
     if (checkAPIEnabledOr403_()) {   
-      DateTime now = rtc_->now();
       display_->clearMatrix();
       web_server_.send(HTTP_OK, "text/plain", "OK");
     }
@@ -737,20 +739,22 @@ void Iot::handleWifiConnection_()
 
 bool Iot::connectMQTT_()
 {
-  unsigned long now = millis();
-  if (1000 > now - last_mqtt_connection_attempt_)
+  if (millis() - last_mqtt_connection_attempt_ < mqtt_retry_delay_)
   {
-    // Do not repeat within 1 sec.
     return false;
   }
   DLOGLN("Connecting to MQTT server...");
   if (!connectMqttOptions_())
   {
     eventLog("MQTT connection failed");
-    last_mqtt_connection_attempt_ = now;
+    // A failed attempt can block for seconds when the broker is unreachable,
+    // freezing the display: wait longer after each failure.
+    last_mqtt_connection_attempt_ = millis();
+    mqtt_retry_delay_ = min(mqtt_retry_delay_ * 2, (unsigned long)MQTT_RETRY_MAX_DELAY);
     return false;
   }
   DLOGLN("Connected!");
+  mqtt_retry_delay_ = MQTT_RETRY_MIN_DELAY;
 
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/light/color/set");
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/light/switch/set");
@@ -1036,7 +1040,7 @@ void Iot::scrollText_(String &text, RgbColor color, int speed, bool rightToLeft)
     // TODO: queue up requests instead of dropping them ?
   }
   if (text.length() > 0 && text.length() <= TICKER_MAX_LENGTH) {
-    display_->scrollText(iot_web_conf_, text, color, speed, rightToLeft);
+    display_->scrollText(text, color, speed, rightToLeft);
   } else {
     DLOG("Text length out of bounds");
     DLOGLN(text.length());

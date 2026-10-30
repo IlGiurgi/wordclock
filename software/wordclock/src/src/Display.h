@@ -7,7 +7,6 @@
 #include "BrightnessController.h"
 #include "ClockFace.h"
 #include "nodo.h"
-#include "Font.h"
 
 // The pin to control the matrix
 #ifndef NEOPIXEL_PIN
@@ -34,6 +33,10 @@
 #ifndef LED_CHANNEL_MILLIAMPS
 #define LED_CHANNEL_MILLIAMPS 20
 #endif
+
+// Defined in Font.h, which holds the font itself and is only included by
+// Display.cpp so the font is not copied into every file.
+struct FontTable;
 
 class Display
 {
@@ -66,7 +69,9 @@ public:
   
   void setMatrix(std::vector<RgbColor> colorValues);
   void clearMatrix();
-  void scrollText(IotWebConf &iwc, String text, RgbColor textColor, int speed = 200, bool rightToLeft = false);
+  // Scrolls the text once, then returns to the clock. Runs from loop(), so
+  // MQTT and the web server keep working while it scrolls.
+  void scrollText(String text, RgbColor textColor, int speed = 200, bool rightToLeft = false);
   enum Mode {
     BOOT,
     CLOCK,
@@ -159,6 +164,10 @@ private:
   Mode _mode;
   std::vector<RgbColor> _matrix_buf;
   
+  // Unscaled copy of the frame while _show() sends a scaled one, kept to
+  // avoid an allocation per frame.
+  std::vector<RgbColor> _unscaled;
+
   // Current budget for the LEDs, in mA.
   uint16_t _maxMilliamps = LED_MAX_MILLIAMPS;
 
@@ -213,5 +222,16 @@ private:
   void _circleAnimUpdate(const AnimationParam &param);
   void _fadeAll(uint8_t darkenBy);
   void _fadeAnimUpdate(const AnimationParam &param);
-  void _displayCharacter(FontTable fontTable, char character, int scrollPosition, RgbColor color);
+  void _displayCharacter(const FontTable &fontTable, char character, int scrollPosition, RgbColor color);
+
+  // Draws the next frame of the scrolling text when it is due.
+  void _tickerLoop();
+  String _tickerText;
+  RgbColor _tickerColor;
+  unsigned long _tickerSpeed = 0; // ms per frame.
+  unsigned long _tickerFrameMs = 0;
+  int _tickerDirection = -1;
+  int _tickerPosition = 0;
+  int _tickerFrame = 0;
+  int _tickerFrames = 0;
 };

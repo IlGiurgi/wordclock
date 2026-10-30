@@ -89,6 +89,8 @@ private:
   bool initialized_ = false;
   // Last MQTT connection attempt.;
   unsigned long last_mqtt_connection_attempt_ = 0;
+  // Current delay between two MQTT connection attempts, in ms.
+  unsigned long mqtt_retry_delay_ = 1000;
 
   // Configuration portal's DNS server.
   DNSServer dns_server_;
