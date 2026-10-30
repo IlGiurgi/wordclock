@@ -49,12 +49,21 @@
 #define PREFS_EFFECT_KEY "effect"
 #define PREFS_NIGHT_KEY "night"
 #define PREFS_DISCOVERY_KEY "discovery"
+// Color set over MQTT, which overrides the one of the configuration page
+// until that page is saved again.
+#define PREFS_COLOR_KEY "color"
+// Delay before saving a color set over MQTT, in ms.
+#define COLOR_SAVE_DELAY 5000
 // Home Assistant MQTT discovery prefix and birth topic.
 #define HA_DISCOVERY_PREFIX "homeassistant"
 #define HA_STATUS_TOPIC "homeassistant/status"
 
 // Set by the SNTP task, logged from the main loop.
 volatile bool ntp_synced = false;
+// Unix time received by the SNTP task, 0 when none is pending. The RTC is
+// written from the main loop: an I2C write from the SNTP task could land
+// between the two transactions of an RTC read and corrupt the time read.
+volatile uint32_t ntp_pending_epoch = 0;
 // Max accepted lenghth of text to scroll.
 #define TICKER_MAX_LENGTH 200
 // Versioning pulled from git by versioning.py script.
@@ -418,6 +427,14 @@ void Iot::setup()
   clearTransientParams_();
   updateClockFromParams_();
 
+  uint8_t rgb[3];
+  prefs.begin(PREFS_NAMESPACE, true /* readOnly */);
+  if (prefs.getBytes(PREFS_COLOR_KEY, rgb, sizeof(rgb)) == sizeof(rgb))
+  {
+    display_->setColor(RgbColor(rgb[0], rgb[1], rgb[2]));
+  }
+  prefs.end();
+
   web_server_.on("/", [this]  { handleHttpToRoot_(); });
   web_server_.onNotFound([this] { iot_web_conf_.handleNotFound(); });
   web_server_.on("/logo.svg", [this]() {
@@ -589,6 +606,19 @@ void Iot::loop()
     }
   }
 
+  applyPendingNTPTime_();
+
+  if (color_save_pending_ && millis() - color_save_ms_ >= COLOR_SAVE_DELAY)
+  {
+    color_save_pending_ = false;
+    RgbColor color = display_->getColor();
+    uint8_t rgb[3] = {color.R, color.G, color.B};
+    Preferences prefs;
+    prefs.begin(PREFS_NAMESPACE, false /* readOnly */);
+    prefs.putBytes(PREFS_COLOR_KEY, rgb, sizeof(rgb));
+    prefs.end();
+  }
+
   static bool ntp_logged = false;
   if (ntp_synced && !ntp_logged)
   {
@@ -615,15 +645,27 @@ void time_sync_notification_cb(struct timeval *tv)
   if (tv->tv_sec > 0)
   {
     ntp_synced = true;
-    time_t now = tv->tv_sec;
-    struct tm timeinfo;
-    localtime_r(&now, &timeinfo);
-    iot_sntp_global->get_rtc()->adjust(
-        DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
-                 timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec));
+    ntp_pending_epoch = tv->tv_sec;
     DLOG("Interval for sync: ");
     DLOGLN(sntp_get_sync_interval());
   }
+}
+
+void Iot::applyPendingNTPTime_()
+{
+  uint32_t epoch = ntp_pending_epoch;
+  if (epoch == 0)
+  {
+    return;
+  }
+  ntp_pending_epoch = 0;
+  // Add the time elapsed since the sync, then convert to local time.
+  time_t now = max((time_t)epoch, time(nullptr));
+  struct tm timeinfo;
+  localtime_r(&now, &timeinfo);
+  rtc_->adjust(DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
+                        timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec));
+  rtc_changed_ = true;
 }
 
 void Iot::maybeSetRTCfromNTP_()
@@ -680,6 +722,7 @@ void Iot::setRTCfromConfig_()
   if (datetime_changed)
   {
     rtc_->adjust(DateTime(year, month, day, hour, minute, second));
+    rtc_changed_ = true;
   }
 }
 
@@ -715,6 +758,12 @@ bool Iot::formValidator_(iotwebconf::WebRequestWrapper *webRequestWrapper)
 void Iot::handleConfigSaved_()
 {
   DLOGLN("Configuration was updated.");
+  // The color of the page applies again, until MQTT sets another one.
+  color_save_pending_ = false;
+  Preferences prefs;
+  prefs.begin(PREFS_NAMESPACE, false /* readOnly */);
+  prefs.remove(PREFS_COLOR_KEY);
+  prefs.end();
   if (parseBooleanValue(mqtt_enabled_value_))
   {
     updateClockRTCFromParams_();
@@ -778,12 +827,15 @@ bool Iot::connectMQTT_()
 
   // Update availability.
   mqtt_client_.publish(mqtt_topic_prefix_ + "/availability", "online", true /* retained */, 0 /* QoS */);
-  // Publish initial ON state for the switch.
-  toggleDisplay_("ON");
-  // Publish current color value.
+  // Publish the current switch state and color. After a reconnect they keep
+  // what Home Assistant set, instead of switching the display back on and
+  // reporting the color of the configuration page.
+  mqtt_client_.publish(
+      mqtt_topic_prefix_ + "/light/switch",
+      display_->isOn() ? "ON" : "OFF", true /* retained */, 0 /* QoS */);
   mqtt_client_.publish(
       mqtt_topic_prefix_ + "/light/color",
-      rgbToMqttString_(parseColorValue(color_value_, RgbColor(0, 0, 0))), true /* retained */, 0 /* QoS */);
+      rgbToMqttString_(display_->getColor()), true /* retained */, 0 /* QoS */);
   // Publish current LED current budget.
   mqtt_client_.publish(
       mqtt_topic_prefix_ + "/light/limit",
@@ -852,6 +904,9 @@ void Iot::mqttMessageReceived_(String &topic, String &payload)
     if (mqttStringToRgb_(payload, &color))
     {
       display_->setColor(color);
+      // Saved a few seconds later: a color picker sends many values.
+      color_save_ms_ = millis();
+      color_save_pending_ = true;
       mqtt_client_.publish(
           mqtt_topic_prefix_ + "/light/color",
           rgbToMqttString_(color), true /* retained */, 0 /* QoS */);

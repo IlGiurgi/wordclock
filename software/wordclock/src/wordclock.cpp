@@ -150,6 +150,15 @@ void setup()
 void loop()
 {
   unsigned long ts_now = millis();
+  if (iot.takeRtcChanged())
+  {
+    // The new time may equal the last one read: not a frozen RTC.
+    bool was_valid = rtc_time_valid;
+    rtc_time_valid = false;
+    syncFromRTC();
+    rtc_time_valid |= was_valid;
+    last_rtc_sync = ts_now;
+  }
   if (ts_now - last_rtc_sync >= RTC_SYNC_INTERVAL)
   {
     syncFromRTC();

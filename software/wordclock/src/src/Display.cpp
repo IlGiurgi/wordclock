@@ -48,7 +48,7 @@ void Display::loop()
           {
           for (int i = 0; i < NEOPIXEL_COLUMNS; i++)
             {
-              if (_matrix_buf.size() >= indexPixel) {
+              if (indexPixel < _matrix_buf.size()) {
                 _pixels.SetPixelColor(_clockFace->map(i, j), _matrix_buf[indexPixel]);
               }
               indexPixel++;

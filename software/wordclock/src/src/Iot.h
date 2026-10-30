@@ -36,10 +36,18 @@ public:
   // the room, heated by the LEDs and the ESP32.
   void setTemperature(float celsius) { temperature_ = celsius; }
 
-  // Used for the C callback for the NTP sync.
-  RTC_DS3231 *get_rtc() { return rtc_; }
+  // Whether the RTC was set since the last call, so the shown time is
+  // re-read from it right away.
+  bool takeRtcChanged()
+  {
+    bool changed = rtc_changed_;
+    rtc_changed_ = false;
+    return changed;
+  }
 
 private:
+  // Writes the time received by the SNTP task to the RTC.
+  void applyPendingNTPTime_();
   // Clears the values of transient parameters.
   void clearTransientParams_();
   // Updates word clock's state to match the current configuration values.
@@ -127,6 +135,13 @@ private:
 
   // Last temperature read from the RTC, in °C.
   float temperature_ = NAN;
+
+  // Whether the RTC was set from NTP or the configuration page.
+  bool rtc_changed_ = false;
+
+  // Pending save of a color set over MQTT, and when it was set.
+  bool color_save_pending_ = false;
+  unsigned long color_save_ms_ = 0;
 
   // Night mode settings and whether the night slot is active.
   NightMode night_;
