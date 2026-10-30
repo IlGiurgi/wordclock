@@ -390,6 +390,8 @@ const char *Display::animationName(Animation animation)
     return "ghost";
   case ANIMATION_SUNRISE:
     return "sunrise";
+  case ANIMATION_FLASH:
+    return "flash";
   default:
     return "";
   }
@@ -421,16 +423,24 @@ void Display::playAnimation(Animation animation, unsigned long durationMs)
   _animationStartMs = millis();
   _animationDurationMs = durationMs > 0 ? durationMs
                          : animation == ANIMATION_SUNRISE ? SUNRISE_DURATION
+                         : animation == ANIMATION_FLASH   ? FLASH_PERIOD * FLASH_DEFAULT_COUNT
                                                           : ANIMATION_DURATION;
   _animationFrameMs = 0;
   _particles.clear();
   _burstRadius = -1;
+  _flashColor = getColor();
   _pixels.ClearTo(black);
   if (animation == ANIMATION_BOOT)
   {
     // The real thing, which returns to the clock when done.
     runBootAnimation();
   }
+}
+
+void Display::flash(RgbColor color, uint8_t count)
+{
+  playAnimation(ANIMATION_FLASH, (unsigned long)FLASH_PERIOD * max(count, (uint8_t)1));
+  _flashColor = color;
 }
 
 void Display::stopAnimation()
@@ -695,6 +705,14 @@ void Display::_renderAnimation(unsigned long elapsedMs)
         _setGridPixel(x, y, color.Dim(dim));
       }
     }
+    break;
+  }
+  case ANIMATION_FLASH:
+  {
+    // On for the first 60% of each period.
+    bool on = elapsedMs % FLASH_PERIOD < FLASH_PERIOD * 6 / 10;
+    HsbColor color(_flashColor);
+    _pixels.ClearTo(on ? hsb(color.H, color.S, color.B) : black);
     break;
   }
   default:

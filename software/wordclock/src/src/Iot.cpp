@@ -572,6 +572,12 @@ void Iot::loop()
             mqtt_client_.publish(
                 mqtt_topic_prefix_ + "/diag/uptime",
                 String(uptimeSeconds()), false /* retained */, 0 /* QoS */);
+            if (!isnan(temperature_))
+            {
+              mqtt_client_.publish(
+                  mqtt_topic_prefix_ + "/sensor/temperature",
+                  String(temperature_, 2), false /* retained */, 0 /* QoS */);
+            }
           }
         }
         else
@@ -764,6 +770,7 @@ bool Iot::connectMQTT_()
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/light/limit/set");
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/light/effect/set");
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/light/animation/set");
+  mqtt_client_.subscribe(mqtt_topic_prefix_ + "/light/notify/set");
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/night/set");
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/discovery/set");
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/diag/log/get");
@@ -921,6 +928,25 @@ void Iot::mqttMessageReceived_(String &topic, String &payload)
     if (comma < 0 || (seconds >= 1 && seconds <= 600))
     {
       display_->playAnimation(Display::animationFromName(name), seconds * 1000);
+    }
+  }
+  else if (topic == mqtt_topic_prefix_ + "/light/notify/set")
+  {
+    // Payload: {"color": "R,G,B", "count": N}, both optional.
+    JsonDocument doc;
+    if (deserializeJson(doc, payload))
+    {
+      return;
+    }
+    RgbColor color = display_->getColor();
+    if (doc["color"].is<const char *>() && !mqttStringToRgb_(doc["color"].as<const char *>(), &color))
+    {
+      return;
+    }
+    int count = doc["count"] | FLASH_DEFAULT_COUNT;
+    if (count >= 1 && count <= 20)
+    {
+      display_->flash(color, count);
     }
   }
   else if (topic == mqtt_topic_prefix_ + "/night/set")
@@ -1152,10 +1178,12 @@ void Iot::publishDiscovery_(bool enabled)
   const Entity entities[] = {
       {"light", "light"},
       {"sensor", "ldr"},
+      {"sensor", "temperature"},
       {"sensor", "uptime"},
       {"sensor", "reset_reason"},
       {"sensor", "led_limit"},
       {"binary_sensor", "night"},
+      {"button", "notify"},
   };
 
   for (const Entity &entity : entities)
@@ -1206,6 +1234,15 @@ void Iot::publishDiscovery_(bool enabled)
       doc["stat_cla"] = "measurement";
       doc["ent_cat"] = "diagnostic";
     }
+    else if (object == "temperature")
+    {
+      doc["name"] = "Temperature";
+      doc["stat_t"] = "~/sensor/temperature";
+      doc["dev_cla"] = "temperature";
+      doc["unit_of_meas"] = "°C";
+      doc["stat_cla"] = "measurement";
+      doc["ent_cat"] = "diagnostic";
+    }
     else if (object == "uptime")
     {
       doc["name"] = "Uptime";
@@ -1232,6 +1269,12 @@ void Iot::publishDiscovery_(bool enabled)
     {
       doc["name"] = "Night mode";
       doc["stat_t"] = "~/night/active";
+    }
+    else if (object == "notify")
+    {
+      doc["name"] = "Flash";
+      doc["cmd_t"] = "~/light/notify/set";
+      doc["pl_prs"] = "{}";
     }
 
     String payload;

@@ -32,6 +32,10 @@ public:
   // Applies the night mode for the given time of day. weekday: 0 = Sunday.
   void updateNight(uint32_t secondsOfDay, uint8_t weekday);
 
+  // Temperature of the RTC chip in °C, NAN when unknown. It runs warmer than
+  // the room, heated by the LEDs and the ESP32.
+  void setTemperature(float celsius) { temperature_ = celsius; }
+
   // Used for the C callback for the NTP sync.
   RTC_DS3231 *get_rtc() { return rtc_; }
 
@@ -120,6 +124,9 @@ private:
   unsigned long last_mqtt_report_ = 0;
   // Whether an animation was playing, to report the effect again when it ends.
   bool animating_ = false;
+
+  // Last temperature read from the RTC, in °C.
+  float temperature_ = NAN;
 
   // Night mode settings and whether the night slot is active.
   NightMode night_;

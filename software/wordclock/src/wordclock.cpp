@@ -38,6 +38,9 @@ Iot iot(&display, &rtc);
 // RTC_SYNC_INTERVAL ms. Polling the RTC over I2C ten times a second froze the
 // displayed time whenever LED noise wedged the bus until a power cycle.
 #define RTC_SYNC_INTERVAL 10000
+// The DS3231 measures its temperature every 64 s.
+#define RTC_TEMPERATURE_INTERVAL 60000
+#define RTC_TEMPERATURE_REGISTER 0x11
 #define DISPLAY_UPDATE_INTERVAL 100
 #define RTC_I2C_ADDRESS 0x68
 
@@ -58,6 +61,7 @@ bool rtc_time_valid = false;
 uint8_t rtc_weekday = 0;
 unsigned long last_rtc_sync = 0;
 unsigned long last_display_update = 0;
+unsigned long last_temperature_read = 0;
 
 // Frees a slave holding SDA low by clocking SCL, then restarts the bus.
 void recoverI2C()
@@ -104,6 +108,20 @@ void syncFromRTC()
   recoverI2C();
 }
 
+// Reads the temperature sensor of the DS3231, NAN when the read fails.
+float readRTCTemperature()
+{
+  Wire.beginTransmission(RTC_I2C_ADDRESS);
+  Wire.write(RTC_TEMPERATURE_REGISTER);
+  if (Wire.endTransmission() != 0 || Wire.requestFrom((uint8_t)RTC_I2C_ADDRESS, (uint8_t)2) != 2)
+  {
+    return NAN;
+  }
+  int8_t degrees = Wire.read();
+  uint8_t quarters = Wire.read() >> 6;
+  return degrees + quarters * 0.25f;
+}
+
 void setup()
 {
   setupLogging();
@@ -122,6 +140,8 @@ void setup()
   }
   syncFromRTC();
   last_rtc_sync = millis();
+  iot.setTemperature(readRTCTemperature());
+  last_temperature_read = millis();
 
   display.setup();
   iot.setup();
@@ -134,6 +154,11 @@ void loop()
   {
     syncFromRTC();
     last_rtc_sync = ts_now;
+  }
+  if (ts_now - last_temperature_read >= RTC_TEMPERATURE_INTERVAL)
+  {
+    iot.setTemperature(readRTCTemperature());
+    last_temperature_read = ts_now;
   }
   if (rtc_time_valid && ts_now - last_display_update >= DISPLAY_UPDATE_INTERVAL)
   {

@@ -25,6 +25,9 @@
 #define ANIMATION_DURATION 10000
 // The sunrise needs longer to rise and show the day.
 #define SUNRISE_DURATION 25000
+// One blink of the flash notification, in ms, and how many by default.
+#define FLASH_PERIOD 600
+#define FLASH_DEFAULT_COUNT 3
 
 // Frame interval of the lighting effects and animations, in ms.
 #define EFFECT_FRAME_INTERVAL 40
@@ -108,12 +111,15 @@ public:
     ANIMATION_PACMAN,    // Pac-Man eating dots.
     ANIMATION_GHOST,     // Pac-Man ghost crossing the screen.
     ANIMATION_SUNRISE,   // Sky warming up from the bottom while the sun rises.
+    ANIMATION_FLASH,     // The whole display blinks, for notifications.
     ANIMATION_COUNT
   };
   // Plays an animation, then returns to the clock (0 uses the animation's
   // default length). Ignored when the display is off or not showing the time.
   // The boot animation always plays once, about 9 s.
   void playAnimation(Animation animation, unsigned long durationMs = 0);
+  // Blinks the whole display in the given color, then returns to the clock.
+  void flash(RgbColor color, uint8_t count = FLASH_DEFAULT_COUNT);
   // Returns to the clock if an animation is playing.
   void stopAnimation();
   static const char *animationName(Animation animation);
@@ -189,6 +195,7 @@ private:
   };
   std::vector<Particle> _particles;
   float _burstRadius = -1; // Firework burst radius, negative while rising.
+  RgbColor _flashColor;
 
   // Whether the display should show AM/PM information.
   bool _show_ampm = 0;
