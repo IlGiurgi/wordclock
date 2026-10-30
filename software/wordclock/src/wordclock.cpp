@@ -14,6 +14,8 @@
    
 #include <Arduino.h>
 #include <RTClib.h>
+#include <esp_sntp.h>
+#include <time.h>
 #include "src/logging.h"
 #include "src/Display.h"
 #include "src/ClockFace.h"
@@ -43,6 +45,8 @@ Iot iot(&display, &rtc);
 #define RTC_TEMPERATURE_REGISTER 0x11
 #define DISPLAY_UPDATE_INTERVAL 100
 #define RTC_I2C_ADDRESS 0x68
+// Below this, the system clock was never set from NTP.
+#define MIN_VALID_EPOCH 1700000000
 
 #ifdef SDA_PIN
 #define RTC_SDA SDA_PIN
@@ -52,8 +56,9 @@ Iot iot(&display, &rtc);
 #define RTC_SCL SCL
 #endif
 
-// Last time of day read from the RTC, in seconds, and the millis() it was
-// read at. Dates are ignored: only the time of day is shown.
+// Last time of day read from the RTC or the system clock, in seconds, and
+// the millis() it was read at. Dates are ignored: only the time of day is
+// shown.
 uint32_t rtc_seconds = 0;
 unsigned long rtc_time_ms = 0;
 bool rtc_time_valid = false;
@@ -108,6 +113,42 @@ void syncFromRTC()
   recoverI2C();
 }
 
+// Takes the time from the system clock once NTP has set it. It applies the
+// timezone rules on every read, so daylight saving time changes show at once:
+// the RTC holds local time and would only follow at the next NTP sync, up to
+// an hour later. Returns false when NTP is off or has not synced yet.
+bool syncFromSystemClock()
+{
+  time_t now = time(nullptr);
+  if (!sntp_enabled() || now < MIN_VALID_EPOCH)
+  {
+    return false;
+  }
+  struct tm local;
+  localtime_r(&now, &local);
+  rtc_seconds = local.tm_hour * 3600UL + local.tm_min * 60UL + local.tm_sec;
+  rtc_time_ms = millis();
+  rtc_time_valid = true;
+  rtc_weekday = local.tm_wday;
+
+  static int last_isdst = -1;
+  if (last_isdst >= 0 && local.tm_isdst != last_isdst)
+  {
+    eventLog(local.tm_isdst > 0 ? "Daylight saving time started" : "Daylight saving time ended");
+  }
+  last_isdst = local.tm_isdst;
+  return true;
+}
+
+// Re-reads the time, from the system clock when NTP set it, else the RTC.
+void syncTime()
+{
+  if (!syncFromSystemClock())
+  {
+    syncFromRTC();
+  }
+}
+
 // Reads the temperature sensor of the DS3231, NAN when the read fails.
 float readRTCTemperature()
 {
@@ -155,13 +196,13 @@ void loop()
     // The new time may equal the last one read: not a frozen RTC.
     bool was_valid = rtc_time_valid;
     rtc_time_valid = false;
-    syncFromRTC();
+    syncTime();
     rtc_time_valid |= was_valid;
     last_rtc_sync = ts_now;
   }
   if (ts_now - last_rtc_sync >= RTC_SYNC_INTERVAL)
   {
-    syncFromRTC();
+    syncTime();
     last_rtc_sync = ts_now;
   }
   if (ts_now - last_temperature_read >= RTC_TEMPERATURE_INTERVAL)

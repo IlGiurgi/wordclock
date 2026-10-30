@@ -50,7 +50,7 @@ The Network section will show at the top of the page if it has not been configur
 
 ### Time
 
-- __Use network time (requires WiFi)__ - Enable NTP to retrieve and periodically correct displayed time. Requires Network seettings to be configured to a WiFi network with internet access (as in AP mode the clock can't access NTP servers).
+- __Use network time (requires WiFi)__ - Enable NTP to retrieve and periodically correct displayed time. Requires Network seettings to be configured to a WiFi network with internet access (as in AP mode the clock can't access NTP servers). Once synced, the time follows the timezone's daylight saving time changes within seconds, and the RTC keeps the time while there is no network.
 - __Time zone__ - Only shown if network time is enabled. Choose your local timezone from this list.
 - __Time__ - When network time is not enabled, the current time can manually be set here. In this mode the clock does not require an internet access nor WiFi to be configured. Time is kept thanks to the coin cell battery powering the RTC chip (meaning you only need to set this once even if you reboot or unplug the clock).
 
@@ -155,7 +155,7 @@ Topics are prefixed with the name defined as `Clock name` in the web UI settings
 - `wordclock/diag/log/get` -> publishes the event log on `wordclock/diag/log`
 
 #### Event log
-The clock keeps its last 20 events (boot and reset reason, WiFi, MQTT and NTP, RTC read errors, LED limit and night mode changes) in flash, so they survive resets. Read them at `http://<clock ip>/api/log` (needs the API toggle) or over MQTT.
+The clock keeps its last 20 events (boot and reset reason, WiFi, MQTT and NTP, RTC read errors, daylight saving time changes, LED limit and night mode changes) in flash, so they survive resets. Read them at `http://<clock ip>/api/log` (needs the API toggle) or over MQTT.
 
 #### Matrix paint (experimental)
 - `wordclock/light/matrix/set` -> activates Paint mode and displays the payload, a 110 characters string using a preset palette, see [Paint](#paint)
