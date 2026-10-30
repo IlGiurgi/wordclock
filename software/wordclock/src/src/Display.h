@@ -7,7 +7,6 @@
 #include "BrightnessController.h"
 #include "ClockFace.h"
 #include "nodo.h"
-#include "Font.h"
 
 // The pin to control the matrix
 #ifndef NEOPIXEL_PIN
@@ -26,6 +25,9 @@
 #define ANIMATION_DURATION 10000
 // The sunrise needs longer to rise and show the day.
 #define SUNRISE_DURATION 25000
+// One blink of the flash notification, in ms, and how many by default.
+#define FLASH_PERIOD 600
+#define FLASH_DEFAULT_COUNT 3
 
 // Frame interval of the lighting effects and animations, in ms.
 #define EFFECT_FRAME_INTERVAL 40
@@ -34,6 +36,10 @@
 #ifndef LED_CHANNEL_MILLIAMPS
 #define LED_CHANNEL_MILLIAMPS 20
 #endif
+
+// Defined in Font.h, which holds the font itself and is only included by
+// Display.cpp so the font is not copied into every file.
+struct FontTable;
 
 class Display
 {
@@ -66,7 +72,9 @@ public:
   
   void setMatrix(std::vector<RgbColor> colorValues);
   void clearMatrix();
-  void scrollText(IotWebConf &iwc, String text, RgbColor textColor, int speed = 200, bool rightToLeft = false);
+  // Scrolls the text once, then returns to the clock. Runs from loop(), so
+  // MQTT and the web server keep working while it scrolls.
+  void scrollText(String text, RgbColor textColor, int speed = 200, bool rightToLeft = false);
   enum Mode {
     BOOT,
     CLOCK,
@@ -103,12 +111,15 @@ public:
     ANIMATION_PACMAN,    // Pac-Man eating dots.
     ANIMATION_GHOST,     // Pac-Man ghost crossing the screen.
     ANIMATION_SUNRISE,   // Sky warming up from the bottom while the sun rises.
+    ANIMATION_FLASH,     // The whole display blinks, for notifications.
     ANIMATION_COUNT
   };
   // Plays an animation, then returns to the clock (0 uses the animation's
   // default length). Ignored when the display is off or not showing the time.
   // The boot animation always plays once, about 9 s.
   void playAnimation(Animation animation, unsigned long durationMs = 0);
+  // Blinks the whole display in the given color, then returns to the clock.
+  void flash(RgbColor color, uint8_t count = FLASH_DEFAULT_COUNT);
   // Returns to the clock if an animation is playing.
   void stopAnimation();
   static const char *animationName(Animation animation);
@@ -159,6 +170,10 @@ private:
   Mode _mode;
   std::vector<RgbColor> _matrix_buf;
   
+  // Unscaled copy of the frame while _show() sends a scaled one, kept to
+  // avoid an allocation per frame.
+  std::vector<RgbColor> _unscaled;
+
   // Current budget for the LEDs, in mA.
   uint16_t _maxMilliamps = LED_MAX_MILLIAMPS;
 
@@ -180,6 +195,7 @@ private:
   };
   std::vector<Particle> _particles;
   float _burstRadius = -1; // Firework burst radius, negative while rising.
+  RgbColor _flashColor;
 
   // Whether the display should show AM/PM information.
   bool _show_ampm = 0;
@@ -213,5 +229,16 @@ private:
   void _circleAnimUpdate(const AnimationParam &param);
   void _fadeAll(uint8_t darkenBy);
   void _fadeAnimUpdate(const AnimationParam &param);
-  void _displayCharacter(FontTable fontTable, char character, int scrollPosition, RgbColor color);
+  void _displayCharacter(const FontTable &fontTable, char character, int scrollPosition, RgbColor color);
+
+  // Draws the next frame of the scrolling text when it is due.
+  void _tickerLoop();
+  String _tickerText;
+  RgbColor _tickerColor;
+  unsigned long _tickerSpeed = 0; // ms per frame.
+  unsigned long _tickerFrameMs = 0;
+  int _tickerDirection = -1;
+  int _tickerPosition = 0;
+  int _tickerFrame = 0;
+  int _tickerFrames = 0;
 };

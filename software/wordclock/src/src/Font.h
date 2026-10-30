@@ -9,14 +9,16 @@ struct FontTable
   int characterHeight;
   char firstChar;
   std::vector<std::vector<bool>> data; // ASCII data.
-  static std::vector<bool> getCharData(FontTable fontTable, char c)
+  // Empty for characters missing from the table.
+  static const std::vector<bool> &getCharData(const FontTable &fontTable, char c)
   {
+    static const std::vector<bool> missing;
     int index = c - fontTable.firstChar;
     if (index < 0 || index >= fontTable.data.size())
     {
-      return std::vector<bool>();
+      return missing;
     }
-    return fontTable.data.at(index);
+    return fontTable.data[index];
   };
 };
 

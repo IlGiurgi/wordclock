@@ -50,7 +50,7 @@ The Network section will show at the top of the page if it has not been configur
 
 ### Time
 
-- __Use network time (requires WiFi)__ - Enable NTP to retrieve and periodically correct displayed time. Requires Network seettings to be configured to a WiFi network with internet access (as in AP mode the clock can't access NTP servers).
+- __Use network time (requires WiFi)__ - Enable NTP to retrieve and periodically correct displayed time. Requires Network seettings to be configured to a WiFi network with internet access (as in AP mode the clock can't access NTP servers). Once synced, the time follows the timezone's daylight saving time changes within seconds, and the RTC keeps the time while there is no network.
 - __Time zone__ - Only shown if network time is enabled. Choose your local timezone from this list.
 - __Time__ - When network time is not enabled, the current time can manually be set here. In this mode the clock does not require an internet access nor WiFi to be configured. Time is kept thanks to the coin cell battery powering the RTC chip (meaning you only need to set this once even if you reboot or unplug the clock).
 
@@ -114,6 +114,7 @@ Topics are prefixed with the name defined as `Clock name` in the web UI settings
 ### State topics
 - `wordclock/availability` -> either `offline` or `online`
 - `wordclock/sensor/ldr` -> current raw LDR reading (0-4095), refreshes every 15 seconds
+- `wordclock/sensor/temperature` -> temperature of the RTC chip in °C, measured every minute and sent every 15 seconds (not retained). It reads warmer than the room, heated by the LEDs and the ESP32.
 - `wordclock/light/color` -> current color (in `r,g,b` format)
 - `wordclock/light/switch` -> current state of the display `ON` or `OFF`
 - `wordclock/light/limit` -> current LED current budget in mA (not retained)
@@ -146,13 +147,15 @@ Topics are prefixed with the name defined as `Clock name` in the web UI settings
   - `pacman`: Pac-Man eating dots
   - `ghost`: Pac-Man ghosts floating across the screen in random directions, speeds and colors
   - `sunrise`: stars fade out while the sky turns from night to day and the sun rises (20 s, then 10 s of daylight)
+  - `flash`: the whole display blinks 3 times in the clock color, see `wordclock/light/notify/set`
+- `wordclock/light/notify/set` -> blinks the whole display, then returns to the clock, e.g. when the doorbell rings. JSON object where every field is optional: `{"color": "255,0,0", "count": 3}`. `color` defaults to the clock color, `count` (1-20) to 3 blinks of 0.6 s. Follows the light sensor, the night mode and the LED limit, and does nothing while the display is off.
 
 - `wordclock/night/set` -> night mode, a JSON object where every field is optional: `{"enabled": true, "start": "23:00", "end": "06:30", "days": "1234567", "brightness": 0}`. During the slot the display runs at `brightness` percent (0 switches it off). The slot may span midnight; `days` lists the days it starts on, 1 = Monday ... 7 = Sunday. Runs on the clock, without Home Assistant, and is saved across reboots.
-- `wordclock/discovery/set` -> `ON` publishes [Home Assistant MQTT discovery](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery) configs for the light (with all effects), the light sensor, uptime, last reset, LED limit and night mode, so no YAML is needed. `OFF` removes them. Saved across reboots. The configs are not retained: they are sent again when the clock connects and when Home Assistant announces itself on `homeassistant/status`. Remove a YAML light first to avoid duplicates.
+- `wordclock/discovery/set` -> `ON` publishes [Home Assistant MQTT discovery](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery) configs for the light (with all effects), the light sensor, the temperature, a `Flash` button, uptime, last reset, LED limit and night mode, so no YAML is needed. `OFF` removes them. Saved across reboots. The configs are not retained: they are sent again when the clock connects and when Home Assistant announces itself on `homeassistant/status`. Remove a YAML light first to avoid duplicates.
 - `wordclock/diag/log/get` -> publishes the event log on `wordclock/diag/log`
 
 #### Event log
-The clock keeps its last 20 events (boot and reset reason, WiFi, MQTT and NTP, RTC read errors, LED limit and night mode changes) in flash, so they survive resets. Read them at `http://<clock ip>/api/log` (needs the API toggle) or over MQTT.
+The clock keeps its last 20 events (boot and reset reason, WiFi, MQTT and NTP, RTC read errors, daylight saving time changes, LED limit and night mode changes) in flash, so they survive resets. Read them at `http://<clock ip>/api/log` (needs the API toggle) or over MQTT.
 
 #### Matrix paint (experimental)
 - `wordclock/light/matrix/set` -> activates Paint mode and displays the payload, a 110 characters string using a preset palette, see [Paint](#paint)

@@ -2,8 +2,11 @@
 
 #include "Display.h"
 #include "ClockFace.h"
+#include "Font.h"
 
 static const RgbColor black = RgbColor(0x00, 0x00, 0x00);
+// Width of a scrolled letter: the 5x7 font plus one column of spacing.
+static const int kTickerLetterWidth = 6;
 
 Display::Display(ClockFace* clockFace, uint8_t pin)
     : _clockFace(clockFace),
@@ -22,9 +25,8 @@ void Display::setup()
 void Display::loop()
 {
   if (_mode == TICKER) {
-    return;
-  }
-  if (_bootAnimations.IsAnimating()) {
+    _tickerLoop();
+  } else if (_bootAnimations.IsAnimating()) {
     _bootAnimations.UpdateAnimations();
   } else if (_mode == ANIMATION) {
     unsigned long elapsed = millis() - _animationStartMs;
@@ -46,7 +48,7 @@ void Display::loop()
           {
           for (int i = 0; i < NEOPIXEL_COLUMNS; i++)
             {
-              if (_matrix_buf.size() >= indexPixel) {
+              if (indexPixel < _matrix_buf.size()) {
                 _pixels.SetPixelColor(_clockFace->map(i, j), _matrix_buf[indexPixel]);
               }
               indexPixel++;
@@ -110,11 +112,11 @@ void Display::_show()
 
   // Send a scaled copy, then restore the unscaled colors: animations and fades
   // read the buffer back and must not compound the scaling.
-  std::vector<RgbColor> unscaled(count);
+  _unscaled.resize(count);
   for (uint16_t index = 0; index < count; index++)
   {
     RgbColor color = _pixels.GetPixelColor(index);
-    unscaled[index] = color;
+    _unscaled[index] = color;
     _pixels.SetPixelColor(index, RgbColor(color.R * numerator / denominator,
                                           color.G * numerator / denominator,
                                           color.B * numerator / denominator));
@@ -122,7 +124,7 @@ void Display::_show()
   _pixels.Show();
   for (uint16_t index = 0; index < count; index++)
   {
-    _pixels.SetPixelColor(index, unscaled[index]);
+    _pixels.SetPixelColor(index, _unscaled[index]);
   }
   // The LEDs already show this frame, scaled.
   _pixels.ResetDirty();
@@ -161,9 +163,10 @@ void Display::setColor(const RgbColor &color)
 void Display::setOff()
 {
   _off = true;
-  if (_mode == ANIMATION)
+  if (_mode == ANIMATION || _mode == TICKER)
   {
     _particles.clear();
+    _tickerText = "";
     _mode = CLOCK;
   }
   _update();
@@ -387,6 +390,8 @@ const char *Display::animationName(Animation animation)
     return "ghost";
   case ANIMATION_SUNRISE:
     return "sunrise";
+  case ANIMATION_FLASH:
+    return "flash";
   default:
     return "";
   }
@@ -418,16 +423,24 @@ void Display::playAnimation(Animation animation, unsigned long durationMs)
   _animationStartMs = millis();
   _animationDurationMs = durationMs > 0 ? durationMs
                          : animation == ANIMATION_SUNRISE ? SUNRISE_DURATION
+                         : animation == ANIMATION_FLASH   ? FLASH_PERIOD * FLASH_DEFAULT_COUNT
                                                           : ANIMATION_DURATION;
   _animationFrameMs = 0;
   _particles.clear();
   _burstRadius = -1;
+  _flashColor = getColor();
   _pixels.ClearTo(black);
   if (animation == ANIMATION_BOOT)
   {
     // The real thing, which returns to the clock when done.
     runBootAnimation();
   }
+}
+
+void Display::flash(RgbColor color, uint8_t count)
+{
+  playAnimation(ANIMATION_FLASH, (unsigned long)FLASH_PERIOD * max(count, (uint8_t)1));
+  _flashColor = color;
 }
 
 void Display::stopAnimation()
@@ -694,6 +707,14 @@ void Display::_renderAnimation(unsigned long elapsedMs)
     }
     break;
   }
+  case ANIMATION_FLASH:
+  {
+    // On for the first 60% of each period.
+    bool on = elapsedMs % FLASH_PERIOD < FLASH_PERIOD * 6 / 10;
+    HsbColor color(_flashColor);
+    _pixels.ClearTo(on ? hsb(color.H, color.S, color.B) : black);
+    break;
+  }
   default:
     break;
   }
@@ -826,9 +847,9 @@ void Display::clearMatrix()
   _update(30);
 }
 
-void Display::_displayCharacter(FontTable fontTable, char character, int scrollPosition, RgbColor color) {
+void Display::_displayCharacter(const FontTable &fontTable, char character, int scrollPosition, RgbColor color) {
   // Get bit array for this character
-  std::vector<bool> charData = FontTable::getCharData(fontTable, character);
+  const std::vector<bool> &charData = FontTable::getCharData(fontTable, character);
   // Iterate through each pixel of the character
   if (charData.size() != fontTable.characterHeight * fontTable.characterWidth) {
     return;
@@ -846,54 +867,49 @@ void Display::_displayCharacter(FontTable fontTable, char character, int scrollP
   }
 }
 
-void Display::scrollText(IotWebConf &iwc, String text, RgbColor textColor, int speed, bool rightToLeft)
+void Display::scrollText(String text, RgbColor textColor, int speed, bool rightToLeft)
 {
   DLOGLN("Ticker activated");
   DLOGLN(text);
 
-  const FontTable fontTable = font5x7;  
-  const int letterSpacing = 1;
-  int textLength = text.length();
-  int scrollSpeed = std::min(10000, std::max(10, speed));
-  int scrollDirection = rightToLeft ? 1 : -1;
-
-  if (fontTable.characterHeight > NEOPIXEL_ROWS) {
+  if (font5x7.characterHeight > NEOPIXEL_ROWS) {
     DLOGLN("Font is too tall to fit the display");
     return;
   }
 
   _animations.StopAll();
   _mode = TICKER;
+  _tickerText = text;
+  _tickerColor = textColor;
+  _tickerSpeed = std::min(10000, std::max(10, speed));
+  _tickerDirection = rightToLeft ? 1 : -1;
+  _tickerFrames = kTickerLetterWidth * text.length() + NEOPIXEL_COLUMNS;
+  _tickerPosition = rightToLeft ? NEOPIXEL_COLUMNS - _tickerFrames : NEOPIXEL_COLUMNS;
+  _tickerFrame = 0;
+  _tickerFrameMs = millis() - _tickerSpeed; // Draw the first frame now.
+}
 
-  // Calculate total scrolling distance
-  const int letterWidth = fontTable.characterWidth + letterSpacing;
-  const int totalScrollDistance = letterWidth * textLength + NEOPIXEL_COLUMNS;
-
-  // Starting position
-  int scrollPosition = scrollDirection == 1 ? NEOPIXEL_COLUMNS - totalScrollDistance : NEOPIXEL_COLUMNS;
-
-  // Iterate through each pixel of the scrolling text
-  for (int i = 0; i <= totalScrollDistance; i++) {
-    _pixels.ClearTo(black);
-
-    for (int j = 0; j < textLength; j++) {
-      int charPos = scrollPosition + j * letterWidth;
-      if (charPos >= -fontTable.characterWidth && charPos < NEOPIXEL_COLUMNS) {
-      _displayCharacter(fontTable, text.charAt(j), charPos, textColor);
-      }
-    }
-
-    // Update the matrix
-    _show();
-
-    // Update scroll position
-    scrollPosition += scrollDirection;
-
-    // Delay between frames
-    iwc.delay(scrollSpeed);
+void Display::_tickerLoop()
+{
+  if (millis() - _tickerFrameMs < _tickerSpeed) {
+    return;
+  }
+  _tickerFrameMs = millis();
+  if (_tickerFrame > _tickerFrames) {
+    _mode = CLOCK;
+    _tickerText = "";
+    DLOGLN("Ticker exited");
+    _update();
+    return;
   }
 
-  _mode = CLOCK;
-  DLOGLN("Ticker exited");
-  _update();
+  _pixels.ClearTo(black);
+  for (int j = 0; j < _tickerText.length(); j++) {
+    int charPos = _tickerPosition + j * kTickerLetterWidth;
+    if (charPos >= -font5x7.characterWidth && charPos < NEOPIXEL_COLUMNS) {
+      _displayCharacter(font5x7, _tickerText.charAt(j), charPos, _tickerColor);
+    }
+  }
+  _tickerPosition += _tickerDirection;
+  _tickerFrame++;
 }

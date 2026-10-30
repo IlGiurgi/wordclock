@@ -36,6 +36,9 @@
 #define NTP_SERVER "pool.ntp.org"
 // LDR MQTT topic publish interval in ms.
 #define MQTT_LDR_PUBLISH_INTERVAL 15000
+// Delay between MQTT connection attempts in ms, doubled after each failure.
+#define MQTT_RETRY_MIN_DELAY 1000
+#define MQTT_RETRY_MAX_DELAY 60000
 // Accepted range for the LED current budget set over MQTT, in mA.
 #define LED_LIMIT_MIN_MILLIAMPS 50
 #define LED_LIMIT_MAX_MILLIAMPS 3000
@@ -46,12 +49,21 @@
 #define PREFS_EFFECT_KEY "effect"
 #define PREFS_NIGHT_KEY "night"
 #define PREFS_DISCOVERY_KEY "discovery"
+// Color set over MQTT, which overrides the one of the configuration page
+// until that page is saved again.
+#define PREFS_COLOR_KEY "color"
+// Delay before saving a color set over MQTT, in ms.
+#define COLOR_SAVE_DELAY 5000
 // Home Assistant MQTT discovery prefix and birth topic.
 #define HA_DISCOVERY_PREFIX "homeassistant"
 #define HA_STATUS_TOPIC "homeassistant/status"
 
 // Set by the SNTP task, logged from the main loop.
 volatile bool ntp_synced = false;
+// Unix time received by the SNTP task, 0 when none is pending. The RTC is
+// written from the main loop: an I2C write from the SNTP task could land
+// between the two transactions of an RTC read and corrupt the time read.
+volatile uint32_t ntp_pending_epoch = 0;
 // Max accepted lenghth of text to scroll.
 #define TICKER_MAX_LENGTH 200
 // Versioning pulled from git by versioning.py script.
@@ -415,6 +427,14 @@ void Iot::setup()
   clearTransientParams_();
   updateClockFromParams_();
 
+  uint8_t rgb[3];
+  prefs.begin(PREFS_NAMESPACE, true /* readOnly */);
+  if (prefs.getBytes(PREFS_COLOR_KEY, rgb, sizeof(rgb)) == sizeof(rgb))
+  {
+    display_->setColor(RgbColor(rgb[0], rgb[1], rgb[2]));
+  }
+  prefs.end();
+
   web_server_.on("/", [this]  { handleHttpToRoot_(); });
   web_server_.onNotFound([this] { iot_web_conf_.handleNotFound(); });
   web_server_.on("/logo.svg", [this]() {
@@ -450,7 +470,6 @@ void Iot::setup()
   });
   web_server_.on("/api/matrix/unset", [this]() {
     if (checkAPIEnabledOr403_()) {   
-      DateTime now = rtc_->now();
       display_->clearMatrix();
       web_server_.send(HTTP_OK, "text/plain", "OK");
     }
@@ -570,6 +589,12 @@ void Iot::loop()
             mqtt_client_.publish(
                 mqtt_topic_prefix_ + "/diag/uptime",
                 String(uptimeSeconds()), false /* retained */, 0 /* QoS */);
+            if (!isnan(temperature_))
+            {
+              mqtt_client_.publish(
+                  mqtt_topic_prefix_ + "/sensor/temperature",
+                  String(temperature_, 2), false /* retained */, 0 /* QoS */);
+            }
           }
         }
         else
@@ -579,6 +604,19 @@ void Iot::loop()
         }
       }
     }
+  }
+
+  applyPendingNTPTime_();
+
+  if (color_save_pending_ && millis() - color_save_ms_ >= COLOR_SAVE_DELAY)
+  {
+    color_save_pending_ = false;
+    RgbColor color = display_->getColor();
+    uint8_t rgb[3] = {color.R, color.G, color.B};
+    Preferences prefs;
+    prefs.begin(PREFS_NAMESPACE, false /* readOnly */);
+    prefs.putBytes(PREFS_COLOR_KEY, rgb, sizeof(rgb));
+    prefs.end();
   }
 
   static bool ntp_logged = false;
@@ -607,15 +645,27 @@ void time_sync_notification_cb(struct timeval *tv)
   if (tv->tv_sec > 0)
   {
     ntp_synced = true;
-    time_t now = tv->tv_sec;
-    struct tm timeinfo;
-    localtime_r(&now, &timeinfo);
-    iot_sntp_global->get_rtc()->adjust(
-        DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
-                 timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec));
+    ntp_pending_epoch = tv->tv_sec;
     DLOG("Interval for sync: ");
     DLOGLN(sntp_get_sync_interval());
   }
+}
+
+void Iot::applyPendingNTPTime_()
+{
+  uint32_t epoch = ntp_pending_epoch;
+  if (epoch == 0)
+  {
+    return;
+  }
+  ntp_pending_epoch = 0;
+  // Add the time elapsed since the sync, then convert to local time.
+  time_t now = max((time_t)epoch, time(nullptr));
+  struct tm timeinfo;
+  localtime_r(&now, &timeinfo);
+  rtc_->adjust(DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
+                        timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec));
+  rtc_changed_ = true;
 }
 
 void Iot::maybeSetRTCfromNTP_()
@@ -672,6 +722,7 @@ void Iot::setRTCfromConfig_()
   if (datetime_changed)
   {
     rtc_->adjust(DateTime(year, month, day, hour, minute, second));
+    rtc_changed_ = true;
   }
 }
 
@@ -707,6 +758,12 @@ bool Iot::formValidator_(iotwebconf::WebRequestWrapper *webRequestWrapper)
 void Iot::handleConfigSaved_()
 {
   DLOGLN("Configuration was updated.");
+  // The color of the page applies again, until MQTT sets another one.
+  color_save_pending_ = false;
+  Preferences prefs;
+  prefs.begin(PREFS_NAMESPACE, false /* readOnly */);
+  prefs.remove(PREFS_COLOR_KEY);
+  prefs.end();
   if (parseBooleanValue(mqtt_enabled_value_))
   {
     updateClockRTCFromParams_();
@@ -737,20 +794,22 @@ void Iot::handleWifiConnection_()
 
 bool Iot::connectMQTT_()
 {
-  unsigned long now = millis();
-  if (1000 > now - last_mqtt_connection_attempt_)
+  if (millis() - last_mqtt_connection_attempt_ < mqtt_retry_delay_)
   {
-    // Do not repeat within 1 sec.
     return false;
   }
   DLOGLN("Connecting to MQTT server...");
   if (!connectMqttOptions_())
   {
     eventLog("MQTT connection failed");
-    last_mqtt_connection_attempt_ = now;
+    // A failed attempt can block for seconds when the broker is unreachable,
+    // freezing the display: wait longer after each failure.
+    last_mqtt_connection_attempt_ = millis();
+    mqtt_retry_delay_ = min(mqtt_retry_delay_ * 2, (unsigned long)MQTT_RETRY_MAX_DELAY);
     return false;
   }
   DLOGLN("Connected!");
+  mqtt_retry_delay_ = MQTT_RETRY_MIN_DELAY;
 
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/light/color/set");
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/light/switch/set");
@@ -760,6 +819,7 @@ bool Iot::connectMQTT_()
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/light/limit/set");
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/light/effect/set");
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/light/animation/set");
+  mqtt_client_.subscribe(mqtt_topic_prefix_ + "/light/notify/set");
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/night/set");
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/discovery/set");
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/diag/log/get");
@@ -767,12 +827,15 @@ bool Iot::connectMQTT_()
 
   // Update availability.
   mqtt_client_.publish(mqtt_topic_prefix_ + "/availability", "online", true /* retained */, 0 /* QoS */);
-  // Publish initial ON state for the switch.
-  toggleDisplay_("ON");
-  // Publish current color value.
+  // Publish the current switch state and color. After a reconnect they keep
+  // what Home Assistant set, instead of switching the display back on and
+  // reporting the color of the configuration page.
+  mqtt_client_.publish(
+      mqtt_topic_prefix_ + "/light/switch",
+      display_->isOn() ? "ON" : "OFF", true /* retained */, 0 /* QoS */);
   mqtt_client_.publish(
       mqtt_topic_prefix_ + "/light/color",
-      rgbToMqttString_(parseColorValue(color_value_, RgbColor(0, 0, 0))), true /* retained */, 0 /* QoS */);
+      rgbToMqttString_(display_->getColor()), true /* retained */, 0 /* QoS */);
   // Publish current LED current budget.
   mqtt_client_.publish(
       mqtt_topic_prefix_ + "/light/limit",
@@ -841,6 +904,9 @@ void Iot::mqttMessageReceived_(String &topic, String &payload)
     if (mqttStringToRgb_(payload, &color))
     {
       display_->setColor(color);
+      // Saved a few seconds later: a color picker sends many values.
+      color_save_ms_ = millis();
+      color_save_pending_ = true;
       mqtt_client_.publish(
           mqtt_topic_prefix_ + "/light/color",
           rgbToMqttString_(color), true /* retained */, 0 /* QoS */);
@@ -917,6 +983,25 @@ void Iot::mqttMessageReceived_(String &topic, String &payload)
     if (comma < 0 || (seconds >= 1 && seconds <= 600))
     {
       display_->playAnimation(Display::animationFromName(name), seconds * 1000);
+    }
+  }
+  else if (topic == mqtt_topic_prefix_ + "/light/notify/set")
+  {
+    // Payload: {"color": "R,G,B", "count": N}, both optional.
+    JsonDocument doc;
+    if (deserializeJson(doc, payload))
+    {
+      return;
+    }
+    RgbColor color = display_->getColor();
+    if (doc["color"].is<const char *>() && !mqttStringToRgb_(doc["color"].as<const char *>(), &color))
+    {
+      return;
+    }
+    int count = doc["count"] | FLASH_DEFAULT_COUNT;
+    if (count >= 1 && count <= 20)
+    {
+      display_->flash(color, count);
     }
   }
   else if (topic == mqtt_topic_prefix_ + "/night/set")
@@ -1036,7 +1121,7 @@ void Iot::scrollText_(String &text, RgbColor color, int speed, bool rightToLeft)
     // TODO: queue up requests instead of dropping them ?
   }
   if (text.length() > 0 && text.length() <= TICKER_MAX_LENGTH) {
-    display_->scrollText(iot_web_conf_, text, color, speed, rightToLeft);
+    display_->scrollText(text, color, speed, rightToLeft);
   } else {
     DLOG("Text length out of bounds");
     DLOGLN(text.length());
@@ -1148,10 +1233,12 @@ void Iot::publishDiscovery_(bool enabled)
   const Entity entities[] = {
       {"light", "light"},
       {"sensor", "ldr"},
+      {"sensor", "temperature"},
       {"sensor", "uptime"},
       {"sensor", "reset_reason"},
       {"sensor", "led_limit"},
       {"binary_sensor", "night"},
+      {"button", "notify"},
   };
 
   for (const Entity &entity : entities)
@@ -1202,6 +1289,15 @@ void Iot::publishDiscovery_(bool enabled)
       doc["stat_cla"] = "measurement";
       doc["ent_cat"] = "diagnostic";
     }
+    else if (object == "temperature")
+    {
+      doc["name"] = "Temperature";
+      doc["stat_t"] = "~/sensor/temperature";
+      doc["dev_cla"] = "temperature";
+      doc["unit_of_meas"] = "°C";
+      doc["stat_cla"] = "measurement";
+      doc["ent_cat"] = "diagnostic";
+    }
     else if (object == "uptime")
     {
       doc["name"] = "Uptime";
@@ -1228,6 +1324,12 @@ void Iot::publishDiscovery_(bool enabled)
     {
       doc["name"] = "Night mode";
       doc["stat_t"] = "~/night/active";
+    }
+    else if (object == "notify")
+    {
+      doc["name"] = "Flash";
+      doc["cmd_t"] = "~/light/notify/set";
+      doc["pl_prs"] = "{}";
     }
 
     String payload;
