@@ -147,6 +147,11 @@ Topics are prefixed with the name defined as `Clock name` in the web UI settings
   - `pacman`: Pac-Man eating dots
   - `ghost`: Pac-Man ghosts floating across the screen in random directions, speeds and colors
   - `sunrise`: stars fade out while the sky turns from night to day and the sun rises (20 s, then 10 s of daylight)
+  - `pumpkin`: jack-o'-lantern whose face glows with a flickering candle
+  - `bats`: purple bats flapping past the full moon
+  - `skull`: skull with glowing red eyes, chattering its teeth
+  - `witchfire`: purple and orange flames
+  - `halloween`: pumpkin, bats, ghosts, skull and witch fire, 6 s each (30 s by default). On October 31st it also plays by itself at every full hour from 18:00 to 23:00, when the clock is on and showing the time
   - `flash`: the whole display blinks 3 times in the clock color, see `wordclock/light/notify/set`
 - `wordclock/light/notify/set` -> blinks the whole display, then returns to the clock, e.g. when the doorbell rings. JSON object where every field is optional: `{"color": "255,0,0", "count": 3}`. `color` defaults to the clock color, `count` (1-20) to 3 blinks of 0.6 s. Follows the light sensor, the night mode and the LED limit, and does nothing while the display is off.
 
@@ -179,7 +184,7 @@ mqtt:
         rgb_command_topic: "wordclock/light/color/set"
         effect_state_topic: "wordclock/light/effect"
         effect_command_topic: "wordclock/light/effect/set"
-        effect_list: ["none", "rainbow", "colorloop", "breathe", "heart", "smile", "star", "matrix", "fireworks", "snow", "boot", "rain", "pacman", "ghost", "sunrise"]
+        effect_list: ["none", "rainbow", "colorloop", "breathe", "heart", "smile", "star", "matrix", "fireworks", "snow", "boot", "rain", "pacman", "ghost", "sunrise", "flash", "pumpkin", "bats", "skull", "witchfire", "halloween"]
         qos: 0
         optimistic: false
   button:

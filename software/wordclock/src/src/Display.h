@@ -25,6 +25,8 @@
 #define ANIMATION_DURATION 10000
 // The sunrise needs longer to rise and show the day.
 #define SUNRISE_DURATION 25000
+// The Halloween show plays each of its scenes for this long, in ms.
+#define HALLOWEEN_SCENE_DURATION 6000
 // One blink of the flash notification, in ms, and how many by default.
 #define FLASH_PERIOD 600
 #define FLASH_DEFAULT_COUNT 3
@@ -112,6 +114,11 @@ public:
     ANIMATION_GHOST,     // Pac-Man ghost crossing the screen.
     ANIMATION_SUNRISE,   // Sky warming up from the bottom while the sun rises.
     ANIMATION_FLASH,     // The whole display blinks, for notifications.
+    ANIMATION_PUMPKIN,   // Jack-o'-lantern lit by a flickering candle.
+    ANIMATION_BATS,      // Purple bats flapping past the moon.
+    ANIMATION_SKULL,     // Skull with glowing red eyes, chattering its teeth.
+    ANIMATION_WITCHFIRE, // Purple and orange flames.
+    ANIMATION_HALLOWEEN, // Pumpkin, bats, ghosts, skull and flames in turn.
     ANIMATION_COUNT
   };
   // Plays an animation, then returns to the clock (0 uses the animation's
@@ -149,6 +156,8 @@ private:
 
   // Draws the current animation frame.
   void _renderAnimation(unsigned long elapsedMs);
+  // Draws a frame of the given animation, elapsedMs after it started.
+  void _drawAnimation(Animation animation, unsigned long elapsedMs);
 
   // Sets a pixel of the letter grid, ignoring positions outside of it.
   void _setGridPixel(int x, int y, RgbColor color);
@@ -195,6 +204,12 @@ private:
   };
   std::vector<Particle> _particles;
   float _burstRadius = -1; // Firework burst radius, negative while rising.
+  // Heat of each grid pixel for the witch fire, row by row.
+  std::vector<uint8_t> _heat;
+  // Candle brightness of the pumpkin, from 0 to 1.
+  float _candle = 1;
+  // Scene of the Halloween show being played, -1 before the first.
+  int _halloweenScene = -1;
   RgbColor _flashColor;
 
   // Whether the display should show AM/PM information.
