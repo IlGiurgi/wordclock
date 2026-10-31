@@ -362,6 +362,54 @@ const char *const kGhost[] = {
     "XXXXXXX",
     "X.X.X.X",
     ".X.X.X."};
+
+// Jack-o'-lantern. 'G' is the stem, 'O' the pumpkin and 'E' the carved
+// eyes, nose and mouth, lit by the candle.
+const char *const kPumpkin[NEOPIXEL_ROWS] = {
+    "....GG.....",
+    ".....G.....",
+    "..OOOOOOO..",
+    ".OOOOOOOOO.",
+    "OOEOOOOOEOO",
+    "OEEEOOOEEEO",
+    "OOOOOEOOOOO",
+    "OEEOEEEOEEO",
+    ".OEEEOEEEO.",
+    "..OOOOOOO.."};
+
+// Skull without its jaw. 'E' are the eye sockets, glowing red.
+const char *const kSkull[7] = {
+    "..XXXXXXX..",
+    ".XXXXXXXXX.",
+    "XXXXXXXXXXX",
+    "XXEEXXXEEXX",
+    "XXEEXXXEEXX",
+    ".XXXX.XXXX.",
+    "..XX...XX.."};
+const char *const kJawClosed[3] = {
+    "...XXXXX...",
+    "...X.X.X...",
+    "...XXXXX..."};
+const char *const kJawOpen[3] = {
+    "...X.X.X...",
+    "...........",
+    "...XXXXX..."};
+
+// 5x3 bat, wings up and down.
+const char *const kBatUp[3] = {
+    "X...X",
+    ".XXX.",
+    "..X.."};
+const char *const kBatDown[3] = {
+    ".....",
+    ".XXX.",
+    "X.X.X"};
+
+// Scenes of the Halloween show, in order.
+const Display::Animation kHalloweenScenes[] = {
+    Display::ANIMATION_PUMPKIN, Display::ANIMATION_BATS, Display::ANIMATION_GHOST,
+    Display::ANIMATION_SKULL, Display::ANIMATION_WITCHFIRE};
+const int kHalloweenSceneCount = sizeof(kHalloweenScenes) / sizeof(kHalloweenScenes[0]);
 } // namespace
 
 const char *Display::animationName(Animation animation)
@@ -392,6 +440,16 @@ const char *Display::animationName(Animation animation)
     return "sunrise";
   case ANIMATION_FLASH:
     return "flash";
+  case ANIMATION_PUMPKIN:
+    return "pumpkin";
+  case ANIMATION_BATS:
+    return "bats";
+  case ANIMATION_SKULL:
+    return "skull";
+  case ANIMATION_WITCHFIRE:
+    return "witchfire";
+  case ANIMATION_HALLOWEEN:
+    return "halloween";
   default:
     return "";
   }
@@ -424,10 +482,14 @@ void Display::playAnimation(Animation animation, unsigned long durationMs)
   _animationDurationMs = durationMs > 0 ? durationMs
                          : animation == ANIMATION_SUNRISE ? SUNRISE_DURATION
                          : animation == ANIMATION_FLASH   ? FLASH_PERIOD * FLASH_DEFAULT_COUNT
+                         : animation == ANIMATION_HALLOWEEN ? HALLOWEEN_SCENE_DURATION * kHalloweenSceneCount
                                                           : ANIMATION_DURATION;
   _animationFrameMs = 0;
   _particles.clear();
   _burstRadius = -1;
+  _heat.clear();
+  _candle = 0.85f;
+  _halloweenScene = -1;
   _flashColor = getColor();
   _pixels.ClearTo(black);
   if (animation == ANIMATION_BOOT)
@@ -475,13 +537,32 @@ void Display::_drawBitmap(const char *const *rows, RgbColor color)
 
 void Display::_renderAnimation(unsigned long elapsedMs)
 {
+  if (_animation != ANIMATION_HALLOWEEN)
+  {
+    _drawAnimation(_animation, elapsedMs);
+    return;
+  }
+  int scene = elapsedMs / HALLOWEEN_SCENE_DURATION;
+  if (scene != _halloweenScene)
+  {
+    // Each scene starts on a dark screen with its own state.
+    _halloweenScene = scene;
+    _particles.clear();
+    _heat.clear();
+    _pixels.ClearTo(black);
+  }
+  _drawAnimation(kHalloweenScenes[scene % kHalloweenSceneCount], elapsedMs % HALLOWEEN_SCENE_DURATION);
+}
+
+void Display::_drawAnimation(Animation animation, unsigned long elapsedMs)
+{
   // Follow the chosen brightness, but stay visible when the clock is very dim.
   const float brightness = max(HsbColor(_brightnessController.getCorrectedColor()).B, 0.12f);
   auto hsb = [brightness](float hue, float saturation, float value) {
     return RgbColor(HsbColor(hue - floorf(hue), saturation, value * brightness));
   };
 
-  switch (_animation)
+  switch (animation)
   {
   case ANIMATION_HEART:
   {
@@ -637,7 +718,7 @@ void Display::_renderAnimation(unsigned long elapsedMs)
     // Up to two ghosts in the classic colors, each with its own direction,
     // speed and height, floating up and down.
     static const float kHues[] = {0, 0.9f, 0.5f, 0.08f};
-    if (_particles.size() < 2 && random(30) == 0)
+    if (_particles.empty() || (_particles.size() < 2 && random(30) == 0))
     {
       bool toRight = random(2) == 0;
       float speed = random(8, 25) / 100.0f;
@@ -713,6 +794,137 @@ void Display::_renderAnimation(unsigned long elapsedMs)
     bool on = elapsedMs % FLASH_PERIOD < FLASH_PERIOD * 6 / 10;
     HsbColor color(_flashColor);
     _pixels.ClearTo(on ? hsb(color.H, color.S, color.B) : black);
+    break;
+  }
+  case ANIMATION_PUMPKIN:
+  {
+    // The candle wanders around 85% and sometimes nearly goes out.
+    _candle += random(-15, 16) / 100.0f + (0.85f - _candle) * 0.15f;
+    if (random(60) == 0)
+      _candle = 0.3f;
+    _candle = constrain(_candle, 0.3f, 1.0f);
+    // The candle is lit during the first second.
+    float glow = _candle * min(elapsedMs / 1000.0f, 1.0f);
+    for (int y = 0; y < NEOPIXEL_ROWS; y++)
+    {
+      for (int x = 0; x < NEOPIXEL_COLUMNS; x++)
+      {
+        switch (kPumpkin[y][x])
+        {
+        case 'G':
+          _setGridPixel(x, y, hsb(0.3f, 1, 0.5f));
+          break;
+        case 'O':
+          _setGridPixel(x, y, hsb(0.06f, 1, 0.4f + 0.2f * glow));
+          break;
+        case 'E':
+          _setGridPixel(x, y, hsb(0.1f + 0.03f * glow, 0.95f - 0.2f * glow, glow));
+          break;
+        default:
+          _setGridPixel(x, y, black);
+        }
+      }
+    }
+    break;
+  }
+  case ANIMATION_BATS:
+  {
+    // Up to three bats, each with its own direction, speed, height and
+    // flapping phase (kept in hue).
+    if (_particles.empty() || (_particles.size() < 3 && random(25) == 0))
+    {
+      bool toRight = random(2) == 0;
+      float speed = random(10, 22) / 100.0f;
+      _particles.push_back({toRight ? -5.0f : static_cast<float>(NEOPIXEL_COLUMNS), static_cast<float>(random(1, 7)),
+                            toRight ? speed : -speed, random(100) / 100.0f});
+    }
+    _pixels.ClearTo(black);
+    // Full moon in the top right corner.
+    for (int y = 0; y < 4; y++)
+    {
+      for (int x = 7; x < NEOPIXEL_COLUMNS; x++)
+      {
+        if ((x - 8.5f) * (x - 8.5f) + (y - 1.5f) * (y - 1.5f) <= 2.6f)
+          _setGridPixel(x, y, hsb(0.13f, 0.35f, 0.5f));
+      }
+    }
+    for (auto it = _particles.begin(); it != _particles.end();)
+    {
+      bool wingsUp = (elapsedMs + static_cast<unsigned long>(it->hue * 1000)) / 120 % 2 == 0;
+      const char *const *bat = wingsUp ? kBatUp : kBatDown;
+      int left = roundf(it->x);
+      int top = roundf(it->y + 0.8f * sinf(elapsedMs / 300.0f + it->hue * 6));
+      for (int row = 0; row < 3; row++)
+      {
+        for (int col = 0; col < 5; col++)
+        {
+          if (bat[row][col] == 'X')
+            _setGridPixel(left + col, top + row, hsb(0.78f, 0.9f, 0.85f));
+        }
+      }
+      it->x += it->speed;
+      bool gone = it->x < -6 || it->x > NEOPIXEL_COLUMNS + 1;
+      it = gone ? _particles.erase(it) : it + 1;
+    }
+    break;
+  }
+  case ANIMATION_SKULL:
+  {
+    // The eyes glow slowly. Every 3 s the teeth chatter for a second.
+    float eyes = 0.25f + 0.75f * (0.5f + 0.5f * sinf(elapsedMs / 1600.0f * 2 * PI));
+    unsigned long cycle = elapsedMs % 3000;
+    bool open = cycle < 1200 && (cycle / 150) % 2 == 0;
+    const char *const *jaw = open ? kJawOpen : kJawClosed;
+    for (int y = 0; y < NEOPIXEL_ROWS; y++)
+    {
+      const char *line = y < 7 ? kSkull[y] : jaw[y - 7];
+      for (int x = 0; x < NEOPIXEL_COLUMNS; x++)
+      {
+        char c = line[x];
+        _setGridPixel(x, y, c == 'X' ? hsb(0.12f, 0.15f, 0.6f) : c == 'E' ? hsb(0, 1, eyes) : black);
+      }
+    }
+    break;
+  }
+  case ANIMATION_WITCHFIRE:
+  {
+    // Each column burns on its own: the heat cools, rises and new sparks
+    // light up at the bottom. Row 0 is the top.
+    const int columns = NEOPIXEL_COLUMNS, rows = NEOPIXEL_ROWS;
+    if (_heat.empty())
+      _heat.assign(columns * rows, 0);
+    for (int x = 0; x < columns; x++)
+    {
+      for (int y = 0; y < rows; y++)
+      {
+        uint8_t &heat = _heat[y * columns + x];
+        heat = max(0, heat - static_cast<int>(random(0, 45)));
+      }
+      for (int y = 0; y < rows - 2; y++)
+      {
+        _heat[y * columns + x] = (_heat[(y + 1) * columns + x] + 2 * _heat[(y + 2) * columns + x]) / 3;
+      }
+      if (random(10) < 6)
+      {
+        uint8_t &heat = _heat[(rows - 1 - random(2)) * columns + x];
+        heat = min(255, heat + static_cast<int>(random(120, 220)));
+      }
+    }
+    // From dark purple, through magenta, to orange and yellow.
+    for (int y = 0; y < rows; y++)
+    {
+      for (int x = 0; x < columns; x++)
+      {
+        float t = _heat[y * columns + x] / 255.0f;
+        if (t < 0.33f)
+          _setGridPixel(x, y, hsb(0.78f, 1, t / 0.33f * 0.6f));
+        else if (t < 0.66f)
+          _setGridPixel(x, y, hsb(0.78f + (t - 0.33f) / 0.33f * 0.29f, 1, 0.6f + (t - 0.33f) / 0.33f * 0.25f));
+        else
+          _setGridPixel(x, y, hsb(0.07f + (t - 0.66f) / 0.34f * 0.06f, 1 - (t - 0.66f) / 0.34f * 0.3f,
+                              0.85f + (t - 0.66f) / 0.34f * 0.15f));
+      }
+    }
     break;
   }
   default:

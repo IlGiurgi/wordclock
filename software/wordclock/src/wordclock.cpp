@@ -47,6 +47,9 @@ Iot iot(&display, &rtc);
 #define RTC_I2C_ADDRESS 0x68
 // Below this, the system clock was never set from NTP.
 #define MIN_VALID_EPOCH 1700000000
+// On October 31st the Halloween show plays at every full hour in this range.
+#define HALLOWEEN_FIRST_HOUR 18
+#define HALLOWEEN_LAST_HOUR 23
 
 #ifdef SDA_PIN
 #define RTC_SDA SDA_PIN
@@ -64,6 +67,11 @@ unsigned long rtc_time_ms = 0;
 bool rtc_time_valid = false;
 // Day of the week from the RTC, 0 = Sunday.
 uint8_t rtc_weekday = 0;
+// Date of the last reading, month 1-12 and day 1-31.
+uint8_t rtc_month = 0;
+uint8_t rtc_day = 0;
+// Hour the Halloween show last started at, -1 for none.
+int halloween_hour = -1;
 unsigned long last_rtc_sync = 0;
 unsigned long last_display_update = 0;
 unsigned long last_temperature_read = 0;
@@ -108,6 +116,8 @@ void syncFromRTC()
     rtc_time_ms = millis();
     rtc_time_valid = true;
     rtc_weekday = now.dayOfTheWeek();
+    rtc_month = now.month();
+    rtc_day = now.day();
     return;
   }
   recoverI2C();
@@ -130,6 +140,8 @@ bool syncFromSystemClock()
   rtc_time_ms = millis();
   rtc_time_valid = true;
   rtc_weekday = local.tm_wday;
+  rtc_month = local.tm_mon + 1;
+  rtc_day = local.tm_mday;
 
   static int last_isdst = -1;
   if (last_isdst >= 0 && local.tm_isdst != last_isdst)
@@ -161,6 +173,21 @@ float readRTCTemperature()
   int8_t degrees = Wire.read();
   uint8_t quarters = Wire.read() >> 6;
   return degrees + quarters * 0.25f;
+}
+
+// Starts the Halloween show at the first minute of each evening hour of
+// October 31st. playAnimation() skips it when the display is off or busy.
+void playHalloween(uint32_t seconds)
+{
+  int hour = seconds / 3600;
+  bool due = rtc_month == 10 && rtc_day == 31 && hour >= HALLOWEEN_FIRST_HOUR &&
+             hour <= HALLOWEEN_LAST_HOUR && seconds / 60 % 60 == 0;
+  if (due && hour != halloween_hour)
+  {
+    halloween_hour = hour;
+    display.playAnimation(Display::ANIMATION_HALLOWEEN);
+    eventLog("Halloween show");
+  }
 }
 
 void setup()
@@ -215,6 +242,7 @@ void loop()
     uint32_t seconds = currentSeconds();
     display.updateForTime(seconds / 3600, seconds / 60 % 60, seconds % 60);
     iot.updateNight(seconds, rtc_weekday);
+    playHalloween(seconds);
     last_display_update = ts_now;
   }
 
