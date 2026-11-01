@@ -24,7 +24,11 @@ void Display::setup()
 
 void Display::loop()
 {
-  if (_mode == TICKER) {
+  if (_mode == REALTIME) {
+    if (_realtimeTimeoutMs > 0 && millis() - _realtimeFrameMs >= _realtimeTimeoutMs) {
+      stopRealtime();
+    }
+  } else if (_mode == TICKER) {
     _tickerLoop();
   } else if (_bootAnimations.IsAnimating()) {
     _bootAnimations.UpdateAnimations();
@@ -130,6 +134,51 @@ void Display::_show()
   _pixels.ResetDirty();
 }
 
+void Display::showRealtime(const std::vector<RgbColor> &frame, unsigned long timeoutMs)
+{
+  if (_off || _mode == BOOT || _bootAnimations.IsAnimating())
+  {
+    return;
+  }
+  if (_mode != REALTIME)
+  {
+    DLOGLN("Realtime stream started");
+    _animations.StopAll();
+    _particles.clear();
+    _tickerText = "";
+    _mode = REALTIME;
+  }
+  _realtimeFrameMs = millis();
+  _realtimeTimeoutMs = timeoutMs;
+
+  uint16_t index = 0;
+  for (int y = 0; y < NEOPIXEL_ROWS; y++)
+  {
+    for (int x = 0; x < NEOPIXEL_COLUMNS; x++, index++)
+    {
+      _pixels.SetPixelColor(_clockFace->map(x, y), index < frame.size() ? frame[index] : black);
+    }
+  }
+  const ClockFace::Corners corners[] = {ClockFace::TopLeft, ClockFace::TopRight,
+                                        ClockFace::BottomRight, ClockFace::BottomLeft};
+  for (ClockFace::Corners corner : corners)
+  {
+    _pixels.SetPixelColor(_clockFace->mapMinute(corner), index < frame.size() ? frame[index] : black);
+    index++;
+  }
+}
+
+void Display::stopRealtime()
+{
+  if (_mode != REALTIME)
+  {
+    return;
+  }
+  DLOGLN("Realtime stream ended");
+  _mode = CLOCK;
+  _update(50);
+}
+
 void Display::setNightLevel(uint8_t percent)
 {
   percent = min(percent, (uint8_t)100);
@@ -163,7 +212,7 @@ void Display::setColor(const RgbColor &color)
 void Display::setOff()
 {
   _off = true;
-  if (_mode == ANIMATION || _mode == TICKER)
+  if (_mode == ANIMATION || _mode == TICKER || _mode == REALTIME)
   {
     _particles.clear();
     _tickerText = "";

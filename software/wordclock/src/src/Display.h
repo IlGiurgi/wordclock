@@ -82,7 +82,8 @@ public:
     CLOCK,
     MATRIX,
     TICKER,
-    ANIMATION
+    ANIMATION,
+    REALTIME
   };
   Mode getMode() { return _mode; }
 
@@ -132,6 +133,15 @@ public:
   static const char *animationName(Animation animation);
   // Returns ANIMATION_COUNT for an unknown name.
   static Animation animationFromName(const String &name);
+
+  // Shows a frame streamed over the network (DDP, WLED realtime UDP) instead
+  // of the time. frame holds the 110 letters row by row from the top left,
+  // then the corners clockwise from the top left. Returns to the clock when
+  // no frame came for timeoutMs (0: only stopRealtime() returns). Ignored
+  // while the display is off or plays the boot animation.
+  void showRealtime(const std::vector<RgbColor> &frame, unsigned long timeoutMs);
+  // Returns to the clock if a stream is showing.
+  void stopRealtime();
 
   // Brightness of the night mode in percent, 100 when it is not active.
   void setNightLevel(uint8_t percent);
@@ -211,6 +221,10 @@ private:
   // Scene of the Halloween show being played, -1 before the first.
   int _halloweenScene = -1;
   RgbColor _flashColor;
+
+  // When the last streamed frame came, and how long it is kept.
+  unsigned long _realtimeFrameMs = 0;
+  unsigned long _realtimeTimeoutMs = 0;
 
   // Whether the display should show AM/PM information.
   bool _show_ampm = 0;
