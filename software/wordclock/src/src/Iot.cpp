@@ -51,6 +51,7 @@
 #define PREFS_DISCOVERY_KEY "discovery"
 #define PREFS_WLED_REALTIME_KEY "wled_rt"
 #define PREFS_WLED_SYNC_KEY "wled_sync"
+#define PREFS_WLED_OVERLAY_KEY "wled_ovl"
 // Color set over MQTT, which overrides the one of the configuration page
 // until that page is saved again.
 #define PREFS_COLOR_KEY "color"
@@ -369,6 +370,7 @@ void Iot::setup()
   discovery_enabled_ = prefs.getBool(PREFS_DISCOVERY_KEY, false);
   wled_.setRealtimeEnabled(prefs.getBool(PREFS_WLED_REALTIME_KEY, true));
   wled_.setSyncEnabled(prefs.getBool(PREFS_WLED_SYNC_KEY, false));
+  display_->setRealtimeOverlay(prefs.getBool(PREFS_WLED_OVERLAY_KEY, false));
   prefs.end();
   wled_.onSync([this](bool on, RgbColor color)
                { applyWledSync_(on, color); });
@@ -839,6 +841,7 @@ bool Iot::connectMQTT_()
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/diag/log/get");
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/wled/realtime/set");
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/wled/sync/set");
+  mqtt_client_.subscribe(mqtt_topic_prefix_ + "/wled/overlay/set");
   mqtt_client_.subscribe(HA_STATUS_TOPIC);
 
   // Update availability.
@@ -1040,27 +1043,37 @@ void Iot::mqttMessageReceived_(String &topic, String &payload)
       publishDiscovery_(enabled);
     }
   }
-  else if (topic == mqtt_topic_prefix_ + "/wled/realtime/set" ||
-           topic == mqtt_topic_prefix_ + "/wled/sync/set")
+  else if (topic.startsWith(mqtt_topic_prefix_ + "/wled/") && topic.endsWith("/set"))
   {
-    bool realtime = topic.endsWith("/realtime/set");
+    // wordclock/wled/<setting>/set with ON or OFF.
+    String setting = topic.substring(mqtt_topic_prefix_.length() + 6, topic.length() - 4);
     bool enabled = payload == "ON";
-    bool current = realtime ? wled_.realtimeEnabled() : wled_.syncEnabled();
-    if ((enabled || payload == "OFF") && enabled != current)
+    const char *key = setting == "realtime" ? PREFS_WLED_REALTIME_KEY
+                      : setting == "sync"   ? PREFS_WLED_SYNC_KEY
+                      : setting == "overlay" ? PREFS_WLED_OVERLAY_KEY
+                                             : nullptr;
+    bool current = setting == "realtime" ? wled_.realtimeEnabled()
+                   : setting == "sync"   ? wled_.syncEnabled()
+                                         : display_->realtimeOverlay();
+    if (key != nullptr && (enabled || payload == "OFF") && enabled != current)
     {
-      if (realtime)
+      if (setting == "realtime")
       {
         wled_.setRealtimeEnabled(enabled);
       }
-      else
+      else if (setting == "sync")
       {
         wled_.setSyncEnabled(enabled);
       }
+      else
+      {
+        display_->setRealtimeOverlay(enabled);
+      }
       Preferences prefs;
       prefs.begin(PREFS_NAMESPACE, false /* readOnly */);
-      prefs.putBool(realtime ? PREFS_WLED_REALTIME_KEY : PREFS_WLED_SYNC_KEY, enabled);
+      prefs.putBool(key, enabled);
       prefs.end();
-      eventLog(String("WLED ") + (realtime ? "realtime " : "sync ") + (enabled ? "on" : "off"));
+      eventLog("WLED " + setting + (enabled ? " on" : " off"));
     }
     publishWled_();
   }
@@ -1167,6 +1180,7 @@ void Iot::publishWled_()
 {
   mqtt_client_.publish(mqtt_topic_prefix_ + "/wled/realtime", wled_.realtimeEnabled() ? "ON" : "OFF", false /* retained */, 0 /* QoS */);
   mqtt_client_.publish(mqtt_topic_prefix_ + "/wled/sync", wled_.syncEnabled() ? "ON" : "OFF", false /* retained */, 0 /* QoS */);
+  mqtt_client_.publish(mqtt_topic_prefix_ + "/wled/overlay", display_->realtimeOverlay() ? "ON" : "OFF", false /* retained */, 0 /* QoS */);
   mqtt_client_.publish(mqtt_topic_prefix_ + "/wled/live", display_->getMode() == Display::Mode::REALTIME ? "ON" : "OFF", false /* retained */, 0 /* QoS */);
 }
 
@@ -1307,6 +1321,7 @@ void Iot::publishDiscovery_(bool enabled)
       {"button", "notify"},
       {"switch", "wled_realtime"},
       {"switch", "wled_sync"},
+      {"switch", "wled_overlay"},
       {"binary_sensor", "wled_live"},
   };
 
@@ -1412,6 +1427,13 @@ void Iot::publishDiscovery_(bool enabled)
       doc["name"] = "WLED sync";
       doc["stat_t"] = "~/wled/sync";
       doc["cmd_t"] = "~/wled/sync/set";
+      doc["ent_cat"] = "config";
+    }
+    else if (object == "wled_overlay")
+    {
+      doc["name"] = "WLED on time only";
+      doc["stat_t"] = "~/wled/overlay";
+      doc["cmd_t"] = "~/wled/overlay/set";
       doc["ent_cat"] = "config";
     }
     else if (object == "wled_live")

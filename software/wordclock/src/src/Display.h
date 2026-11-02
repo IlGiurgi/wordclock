@@ -142,6 +142,10 @@ public:
   void showRealtime(const std::vector<RgbColor> &frame, unsigned long timeoutMs);
   // Returns to the clock if a stream is showing.
   void stopRealtime();
+  // When on, streams only color the letters and corners of the current time,
+  // so the time stays readable. Off: streams fill the whole display.
+  void setRealtimeOverlay(bool overlay);
+  bool realtimeOverlay() { return _realtimeOverlay; }
 
   // Brightness of the night mode in percent, 100 when it is not active.
   void setNightLevel(uint8_t percent);
@@ -225,6 +229,12 @@ private:
   // When the last streamed frame came, and how long it is kept.
   unsigned long _realtimeFrameMs = 0;
   unsigned long _realtimeTimeoutMs = 0;
+  bool _realtimeOverlay = false;
+  // Last streamed frame, kept to redraw it when the time changes.
+  std::vector<RgbColor> _realtimeFrame;
+
+  // Draws _realtimeFrame, masked to the time in overlay mode.
+  void _drawRealtime();
 
   // Whether the display should show AM/PM information.
   bool _show_ampm = 0;

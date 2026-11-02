@@ -150,21 +150,39 @@ void Display::showRealtime(const std::vector<RgbColor> &frame, unsigned long tim
   }
   _realtimeFrameMs = millis();
   _realtimeTimeoutMs = timeoutMs;
+  _realtimeFrame = frame;
+  _drawRealtime();
+}
 
-  uint16_t index = 0;
+void Display::_drawRealtime()
+{
+  const std::vector<bool> &state = _clockFace->getState();
+  auto draw = [&](uint16_t pixel, size_t index) {
+    bool shown = !_realtimeOverlay || (pixel < state.size() && state[pixel]);
+    _pixels.SetPixelColor(pixel, shown && index < _realtimeFrame.size() ? _realtimeFrame[index] : black);
+  };
+  size_t index = 0;
   for (int y = 0; y < NEOPIXEL_ROWS; y++)
   {
     for (int x = 0; x < NEOPIXEL_COLUMNS; x++, index++)
     {
-      _pixels.SetPixelColor(_clockFace->map(x, y), index < frame.size() ? frame[index] : black);
+      draw(_clockFace->map(x, y), index);
     }
   }
   const ClockFace::Corners corners[] = {ClockFace::TopLeft, ClockFace::TopRight,
                                         ClockFace::BottomRight, ClockFace::BottomLeft};
   for (ClockFace::Corners corner : corners)
   {
-    _pixels.SetPixelColor(_clockFace->mapMinute(corner), index < frame.size() ? frame[index] : black);
-    index++;
+    draw(_clockFace->mapMinute(corner), index++);
+  }
+}
+
+void Display::setRealtimeOverlay(bool overlay)
+{
+  _realtimeOverlay = overlay;
+  if (_mode == REALTIME)
+  {
+    _drawRealtime();
   }
 }
 
@@ -983,9 +1001,16 @@ void Display::_drawAnimation(Animation animation, unsigned long elapsedMs)
 
 void Display::updateForTime(int hour, int minute, int second, int animationSpeed)
 {
-  if (_mode != CLOCK || !_clockFace->stateForTime(hour, minute, second, _show_ampm))
+  // In overlay mode the stream follows the time, so it is kept up to date.
+  bool overlay = _mode == REALTIME && _realtimeOverlay;
+  if ((_mode != CLOCK && !overlay) || !_clockFace->stateForTime(hour, minute, second, _show_ampm))
   {
     return; // Nothing to update.
+  }
+  if (overlay)
+  {
+    _drawRealtime();
+    return;
   }
 
   DLOG("Time: ");

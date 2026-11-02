@@ -124,7 +124,7 @@ Topics are prefixed with the name defined as `Clock name` in the web UI settings
 - `wordclock/diag/log` -> one line per event of the event log, sent after `wordclock/diag/log/get` (not retained)
 - `wordclock/diag/reset_reason` -> reason of the last reset (`POWERON`, `SOFTWARE`, `BROWNOUT`, `PANIC`, `TASK_WATCHDOG`...), refreshes every 15 seconds (not retained)
 - `wordclock/diag/uptime` -> seconds since boot, refreshes every 15 seconds (not retained)
-- `wordclock/wled/realtime`, `wordclock/wled/sync` -> `ON` or `OFF`, see [WLED](#wled) (not retained)
+- `wordclock/wled/realtime`, `wordclock/wled/sync`, `wordclock/wled/overlay` -> `ON` or `OFF`, see [WLED](#wled) (not retained)
 - `wordclock/wled/live` -> `ON` while a stream drives the display, else `OFF` (not retained)
 
 ### Command topics
@@ -161,6 +161,7 @@ Topics are prefixed with the name defined as `Clock name` in the web UI settings
 - `wordclock/discovery/set` -> `ON` publishes [Home Assistant MQTT discovery](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery) configs for the light (with all effects), the light sensor, the temperature, a `Flash` button, uptime, last reset, LED limit, night mode and the WLED switches, so no YAML is needed. `OFF` removes them. Saved across reboots. The configs are not retained: they are sent again when the clock connects and when Home Assistant announces itself on `homeassistant/status`. Remove a YAML light first to avoid duplicates.
 - `wordclock/diag/log/get` -> publishes the event log on `wordclock/diag/log`
 - `wordclock/wled/realtime/set` -> `ON` (default) or `OFF`: accept DDP and WLED realtime streams, see [WLED](#wled). Saved across reboots.
+- `wordclock/wled/overlay/set` -> `ON` or `OFF` (default): streams only color the letters and corners of the time, see [WLED](#wled). Saved across reboots.
 - `wordclock/wled/sync/set` -> `ON` or `OFF` (default): follow the sync notifications of other WLED devices, see [WLED](#wled). Saved across reboots.
 
 #### WLED
@@ -169,6 +170,7 @@ The clock speaks the network protocols of [WLED](https://kno.wled.ge), so WLED, 
 - **Streams** (`wordclock/wled/realtime/set`, on by default): DDP on UDP port 4048, and the WLED realtime protocols WARLS, DRGB, DRGBW and DNRGB on UDP port 21324. A stream replaces the time and the clock comes back by itself when it stops: 2.5 s after the last DDP frame, or after the timeout in the WLED packet (255 keeps the frame until the display is switched off). The clock has 114 pixels: the 11x10 letters row by row from the top left (0-109, not serpentine), then the four corners clockwise from the top left (110-113). The LED limit and the night mode still apply, a switched off clock ignores streams.
   - From WLED: in *LED Preferences*, add a *DDP RGB (network)* output with the clock's IP and 110 (or 114) LEDs, then set up a 2D matrix of 11x10 on it.
   - From LedFx: add a *DDP* device with the clock's IP and 110 pixels.
+- **Effects on the time** (`wordclock/wled/overlay/set`, off by default): a stream only colors the letters and corner dots that show the time, the others stay off. The time stays readable while WLED or LedFx paint it with fire, rainbows or music. Black pixels of the stream hide their letters.
 - **Sync** (`wordclock/wled/sync/set`, off by default): the clock follows the on/off state, color and brightness that WLED devices send with *Send notifications* (sync group 1). Effects are not synced: the clock keeps its own. Home Assistant sees the changes as usual.
 
 #### Event log
