@@ -49,6 +49,9 @@
 #define PREFS_EFFECT_KEY "effect"
 #define PREFS_NIGHT_KEY "night"
 #define PREFS_DISCOVERY_KEY "discovery"
+#define PREFS_WLED_REALTIME_KEY "wled_rt"
+#define PREFS_WLED_SYNC_KEY "wled_sync"
+#define PREFS_WLED_OVERLAY_KEY "wled_ovl"
 // Color set over MQTT, which overrides the one of the configuration page
 // until that page is saved again.
 #define PREFS_COLOR_KEY "color"
@@ -228,7 +231,7 @@ namespace
 } // namespace
 
 Iot::Iot(Display *display, RTC_DS3231 *rtc)
-    : web_server_(WEB_SERVER_PORT), display_(display), rtc_(rtc),
+    : web_server_(WEB_SERVER_PORT), display_(display), rtc_(rtc), wled_(display),
 
       display_group_("display_group", "Display"),
       boot_animation_param_(
@@ -365,7 +368,12 @@ void Iot::setup()
     night_ = night;
   }
   discovery_enabled_ = prefs.getBool(PREFS_DISCOVERY_KEY, false);
+  wled_.setRealtimeEnabled(prefs.getBool(PREFS_WLED_REALTIME_KEY, true));
+  wled_.setSyncEnabled(prefs.getBool(PREFS_WLED_SYNC_KEY, false));
+  display_->setRealtimeOverlay(prefs.getBool(PREFS_WLED_OVERLAY_KEY, false));
   prefs.end();
+  wled_.onSync([this](bool on, RgbColor color)
+               { applyWledSync_(on, color); });
 
   eventLog(String("Boot ") + AUTO_VERSION + ", reset " + resetReasonName());
 
@@ -549,6 +557,7 @@ void Iot::loop()
   if (initialized_ && display_->getMode() != Display::Mode::BOOT)
   {
     iot_web_conf_.doLoop();
+    wled_.loop();
 
     if (parseBooleanValue(mqtt_enabled_value_))
     {
@@ -572,6 +581,12 @@ void Iot::loop()
                 Display::effectName(display_->getEffect()), false /* retained */, 0 /* QoS */);
           }
           animating_ = animating;
+          bool streaming = display_->getMode() == Display::Mode::REALTIME;
+          if (streaming != streaming_)
+          {
+            streaming_ = streaming;
+            mqtt_client_.publish(mqtt_topic_prefix_ + "/wled/live", streaming ? "ON" : "OFF", false /* retained */, 0 /* QoS */);
+          }
           unsigned long now = millis();
           if (MQTT_LDR_PUBLISH_INTERVAL < now - last_mqtt_report_)
           {
@@ -789,6 +804,7 @@ void Iot::handleWifiConnection_()
     needs_mqtt_connect_ = true;
   }
   maybeSetRTCfromNTP_();
+  wled_.begin();
   firstWifiConnection_ = false;
 }
 
@@ -823,6 +839,9 @@ bool Iot::connectMQTT_()
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/night/set");
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/discovery/set");
   mqtt_client_.subscribe(mqtt_topic_prefix_ + "/diag/log/get");
+  mqtt_client_.subscribe(mqtt_topic_prefix_ + "/wled/realtime/set");
+  mqtt_client_.subscribe(mqtt_topic_prefix_ + "/wled/sync/set");
+  mqtt_client_.subscribe(mqtt_topic_prefix_ + "/wled/overlay/set");
   mqtt_client_.subscribe(HA_STATUS_TOPIC);
 
   // Update availability.
@@ -845,6 +864,7 @@ bool Iot::connectMQTT_()
       mqtt_topic_prefix_ + "/light/effect",
       Display::effectName(display_->getEffect()), false /* retained */, 0 /* QoS */);
   publishNight_();
+  publishWled_();
   if (discovery_enabled_)
   {
     publishDiscovery_(true);
@@ -903,13 +923,7 @@ void Iot::mqttMessageReceived_(String &topic, String &payload)
     RgbColor color;
     if (mqttStringToRgb_(payload, &color))
     {
-      display_->setColor(color);
-      // Saved a few seconds later: a color picker sends many values.
-      color_save_ms_ = millis();
-      color_save_pending_ = true;
-      mqtt_client_.publish(
-          mqtt_topic_prefix_ + "/light/color",
-          rgbToMqttString_(color), true /* retained */, 0 /* QoS */);
+      setColor_(color);
     }
   }
   else if (topic == mqtt_topic_prefix_ + "/light/switch/set")
@@ -1029,6 +1043,40 @@ void Iot::mqttMessageReceived_(String &topic, String &payload)
       publishDiscovery_(enabled);
     }
   }
+  else if (topic.startsWith(mqtt_topic_prefix_ + "/wled/") && topic.endsWith("/set"))
+  {
+    // wordclock/wled/<setting>/set with ON or OFF.
+    String setting = topic.substring(mqtt_topic_prefix_.length() + 6, topic.length() - 4);
+    bool enabled = payload == "ON";
+    const char *key = setting == "realtime" ? PREFS_WLED_REALTIME_KEY
+                      : setting == "sync"   ? PREFS_WLED_SYNC_KEY
+                      : setting == "overlay" ? PREFS_WLED_OVERLAY_KEY
+                                             : nullptr;
+    bool current = setting == "realtime" ? wled_.realtimeEnabled()
+                   : setting == "sync"   ? wled_.syncEnabled()
+                                         : display_->realtimeOverlay();
+    if (key != nullptr && (enabled || payload == "OFF") && enabled != current)
+    {
+      if (setting == "realtime")
+      {
+        wled_.setRealtimeEnabled(enabled);
+      }
+      else if (setting == "sync")
+      {
+        wled_.setSyncEnabled(enabled);
+      }
+      else
+      {
+        display_->setRealtimeOverlay(enabled);
+      }
+      Preferences prefs;
+      prefs.begin(PREFS_NAMESPACE, false /* readOnly */);
+      prefs.putBool(key, enabled);
+      prefs.end();
+      eventLog("WLED " + setting + (enabled ? " on" : " off"));
+    }
+    publishWled_();
+  }
   else if (topic == HA_STATUS_TOPIC)
   {
     // Home Assistant restarted: the configs are not retained, send them again.
@@ -1102,6 +1150,38 @@ void Iot::toggleDisplay_(String payload)
         mqtt_topic_prefix_ + "/light/switch",
         "OFF", true /* retained */, 0 /* QoS */);
   }
+}
+
+void Iot::setColor_(RgbColor color)
+{
+  display_->setColor(color);
+  // Saved a few seconds later: a color picker sends many values.
+  color_save_ms_ = millis();
+  color_save_pending_ = true;
+  mqtt_client_.publish(
+      mqtt_topic_prefix_ + "/light/color",
+      rgbToMqttString_(color), true /* retained */, 0 /* QoS */);
+}
+
+void Iot::applyWledSync_(bool on, RgbColor color)
+{
+  if (on != display_->isOn())
+  {
+    toggleDisplay_(on ? "ON" : "OFF");
+  }
+  // Black is how WLED sends a low brightness rounded down: keep the color.
+  if (on && color != RgbColor(0) && color != display_->getColor())
+  {
+    setColor_(color);
+  }
+}
+
+void Iot::publishWled_()
+{
+  mqtt_client_.publish(mqtt_topic_prefix_ + "/wled/realtime", wled_.realtimeEnabled() ? "ON" : "OFF", false /* retained */, 0 /* QoS */);
+  mqtt_client_.publish(mqtt_topic_prefix_ + "/wled/sync", wled_.syncEnabled() ? "ON" : "OFF", false /* retained */, 0 /* QoS */);
+  mqtt_client_.publish(mqtt_topic_prefix_ + "/wled/overlay", display_->realtimeOverlay() ? "ON" : "OFF", false /* retained */, 0 /* QoS */);
+  mqtt_client_.publish(mqtt_topic_prefix_ + "/wled/live", display_->getMode() == Display::Mode::REALTIME ? "ON" : "OFF", false /* retained */, 0 /* QoS */);
 }
 
 void Iot::setMatrixFromPayload_(String &payload) {
@@ -1239,6 +1319,10 @@ void Iot::publishDiscovery_(bool enabled)
       {"sensor", "led_limit"},
       {"binary_sensor", "night"},
       {"button", "notify"},
+      {"switch", "wled_realtime"},
+      {"switch", "wled_sync"},
+      {"switch", "wled_overlay"},
+      {"binary_sensor", "wled_live"},
   };
 
   for (const Entity &entity : entities)
@@ -1330,6 +1414,32 @@ void Iot::publishDiscovery_(bool enabled)
       doc["name"] = "Flash";
       doc["cmd_t"] = "~/light/notify/set";
       doc["pl_prs"] = "{}";
+    }
+    else if (object == "wled_realtime")
+    {
+      doc["name"] = "WLED stream";
+      doc["stat_t"] = "~/wled/realtime";
+      doc["cmd_t"] = "~/wled/realtime/set";
+      doc["ent_cat"] = "config";
+    }
+    else if (object == "wled_sync")
+    {
+      doc["name"] = "WLED sync";
+      doc["stat_t"] = "~/wled/sync";
+      doc["cmd_t"] = "~/wled/sync/set";
+      doc["ent_cat"] = "config";
+    }
+    else if (object == "wled_overlay")
+    {
+      doc["name"] = "WLED on time only";
+      doc["stat_t"] = "~/wled/overlay";
+      doc["cmd_t"] = "~/wled/overlay/set";
+      doc["ent_cat"] = "config";
+    }
+    else if (object == "wled_live")
+    {
+      doc["name"] = "WLED stream active";
+      doc["stat_t"] = "~/wled/live";
     }
 
     String payload;

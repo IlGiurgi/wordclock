@@ -5,6 +5,7 @@
 #include "ClockFace.h"
 #include "IotRangeValueParameter.h"
 #include "NightMode.h"
+#include "WledReceiver.h"
 
 #include <MQTT.h>
 #include <IotWebConf.h>
@@ -64,6 +65,12 @@ private:
   bool checkAPIEnabledOr403_();
   // Toggles the display if payload is "ON" or "OFF".
   void toggleDisplay_(String payload);
+  // Sets the color of the letters, saves it a few seconds later and reports it.
+  void setColor_(RgbColor color);
+  // Follows the on/off state and color of another WLED device.
+  void applyWledSync_(bool on, RgbColor color);
+  // Publishes the WLED settings and whether a stream is showing.
+  void publishWled_();
   // Convenience method to format RgbColor for MQTT publication.
   static String rgbToMqttString_(RgbColor color)
   {
@@ -132,6 +139,11 @@ private:
   unsigned long last_mqtt_report_ = 0;
   // Whether an animation was playing, to report the effect again when it ends.
   bool animating_ = false;
+
+  // Receives DDP and WLED streams and sync notifications.
+  WledReceiver wled_;
+  // Whether a stream was showing, to report when it starts and ends.
+  bool streaming_ = false;
 
   // Last temperature read from the RTC, in °C.
   float temperature_ = NAN;

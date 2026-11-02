@@ -24,7 +24,11 @@ void Display::setup()
 
 void Display::loop()
 {
-  if (_mode == TICKER) {
+  if (_mode == REALTIME) {
+    if (_realtimeTimeoutMs > 0 && millis() - _realtimeFrameMs >= _realtimeTimeoutMs) {
+      stopRealtime();
+    }
+  } else if (_mode == TICKER) {
     _tickerLoop();
   } else if (_bootAnimations.IsAnimating()) {
     _bootAnimations.UpdateAnimations();
@@ -130,6 +134,69 @@ void Display::_show()
   _pixels.ResetDirty();
 }
 
+void Display::showRealtime(const std::vector<RgbColor> &frame, unsigned long timeoutMs)
+{
+  if (_off || _mode == BOOT || _bootAnimations.IsAnimating())
+  {
+    return;
+  }
+  if (_mode != REALTIME)
+  {
+    DLOGLN("Realtime stream started");
+    _animations.StopAll();
+    _particles.clear();
+    _tickerText = "";
+    _mode = REALTIME;
+  }
+  _realtimeFrameMs = millis();
+  _realtimeTimeoutMs = timeoutMs;
+  _realtimeFrame = frame;
+  _drawRealtime();
+}
+
+void Display::_drawRealtime()
+{
+  const std::vector<bool> &state = _clockFace->getState();
+  auto draw = [&](uint16_t pixel, size_t index) {
+    bool shown = !_realtimeOverlay || (pixel < state.size() && state[pixel]);
+    _pixels.SetPixelColor(pixel, shown && index < _realtimeFrame.size() ? _realtimeFrame[index] : black);
+  };
+  size_t index = 0;
+  for (int y = 0; y < NEOPIXEL_ROWS; y++)
+  {
+    for (int x = 0; x < NEOPIXEL_COLUMNS; x++, index++)
+    {
+      draw(_clockFace->map(x, y), index);
+    }
+  }
+  const ClockFace::Corners corners[] = {ClockFace::TopLeft, ClockFace::TopRight,
+                                        ClockFace::BottomRight, ClockFace::BottomLeft};
+  for (ClockFace::Corners corner : corners)
+  {
+    draw(_clockFace->mapMinute(corner), index++);
+  }
+}
+
+void Display::setRealtimeOverlay(bool overlay)
+{
+  _realtimeOverlay = overlay;
+  if (_mode == REALTIME)
+  {
+    _drawRealtime();
+  }
+}
+
+void Display::stopRealtime()
+{
+  if (_mode != REALTIME)
+  {
+    return;
+  }
+  DLOGLN("Realtime stream ended");
+  _mode = CLOCK;
+  _update(50);
+}
+
 void Display::setNightLevel(uint8_t percent)
 {
   percent = min(percent, (uint8_t)100);
@@ -163,7 +230,7 @@ void Display::setColor(const RgbColor &color)
 void Display::setOff()
 {
   _off = true;
-  if (_mode == ANIMATION || _mode == TICKER)
+  if (_mode == ANIMATION || _mode == TICKER || _mode == REALTIME)
   {
     _particles.clear();
     _tickerText = "";
@@ -934,9 +1001,16 @@ void Display::_drawAnimation(Animation animation, unsigned long elapsedMs)
 
 void Display::updateForTime(int hour, int minute, int second, int animationSpeed)
 {
-  if (_mode != CLOCK || !_clockFace->stateForTime(hour, minute, second, _show_ampm))
+  // In overlay mode the stream follows the time, so it is kept up to date.
+  bool overlay = _mode == REALTIME && _realtimeOverlay;
+  if ((_mode != CLOCK && !overlay) || !_clockFace->stateForTime(hour, minute, second, _show_ampm))
   {
     return; // Nothing to update.
+  }
+  if (overlay)
+  {
+    _drawRealtime();
+    return;
   }
 
   DLOG("Time: ");
