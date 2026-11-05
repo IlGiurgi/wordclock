@@ -85,11 +85,15 @@ namespace
   extern const uint8_t paint_html_end[] asm("_binary_src_paint_html_end");
 
   // Custom meta tags to be inserted in the head.
-  const char CUSTOM_HTML_META[] = "<meta name=\"theme-color\" content=\"#121212\" />\n<link rel=\"icon\" href=\"logo.svg\" type=\"image/svg+xml\" />\n";
+  const char CUSTOM_HTML_META[] = "<meta name=\"theme-color\" content=\"#121212\" />\n<link rel=\"icon\" href=\"logo.svg\" type=\"image/svg+xml\" />\n<script src=\"control.js\" defer></script>\n";
 
   // Custom Javascript block that will be added to the header.
   extern const uint8_t customscript_js_start[] asm("_binary_src_customscript_js_start");
   extern const uint8_t customscript_js_end[] asm("_binary_src_customscript_js_end");
+
+  // Control panel of the configuration page, loaded by the page.
+  extern const uint8_t control_js_start[] asm("_binary_src_control_js_start");
+  extern const uint8_t control_js_end[] asm("_binary_src_control_js_end");
 
   // Custom style added to the style tag.
   extern const uint8_t style_css_start[] asm("_binary_src_style_css_start");
@@ -448,6 +452,13 @@ void Iot::setup()
   web_server_.on("/logo.svg", [this]() {
     web_server_.send(HTTP_OK, "image/svg+xml", (char *)logo_svg_start);
   });
+
+  web_server_.on("/control.js", [this]() {
+    web_server_.sendHeader("Cache-Control", "max-age=300");
+    web_server_.send(HTTP_OK, "text/javascript", (char *)control_js_start);
+  });
+  web_server_.on("/state", HTTP_GET, [this]() { handleState_(); });
+  web_server_.on("/control", HTTP_POST, [this]() { handleControl_(); });
 
   web_server_.on(UriBraces("/api/text/set/{}"), [this]() {
     if (checkAPIEnabledOr403_()) {
@@ -918,7 +929,25 @@ bool Iot::mqttStringToRgb_(String payload, RgbColor *color)
 void Iot::mqttMessageReceived_(String &topic, String &payload)
 {
   DLOGLN("Incoming: " + topic + " - " + payload);
-  if (topic == mqtt_topic_prefix_ + "/light/color/set")
+  if (topic == HA_STATUS_TOPIC)
+  {
+    // Home Assistant restarted: the configs are not retained, send them again.
+    if (payload == "online" && discovery_enabled_)
+    {
+      publishDiscovery_(true);
+    }
+    return;
+  }
+  String prefix = mqtt_topic_prefix_ + "/";
+  if (topic.startsWith(prefix))
+  {
+    handleCommand_(topic.substring(prefix.length()), payload);
+  }
+}
+
+void Iot::handleCommand_(const String &command, const String &payload)
+{
+  if (command == "light/color/set")
   {
     RgbColor color;
     if (mqttStringToRgb_(payload, &color))
@@ -926,19 +955,19 @@ void Iot::mqttMessageReceived_(String &topic, String &payload)
       setColor_(color);
     }
   }
-  else if (topic == mqtt_topic_prefix_ + "/light/switch/set")
+  else if (command == "light/switch/set")
   {
     toggleDisplay_(payload);
   }
-  else if (topic == mqtt_topic_prefix_ + "/light/matrix/set")
+  else if (command == "light/matrix/set")
   {
     setMatrixFromPayload_(payload);
   }
-  else if (topic == mqtt_topic_prefix_ + "/light/matrix/unset")
+  else if (command == "light/matrix/unset")
   {
     display_->clearMatrix();
   }
-  else if (topic == mqtt_topic_prefix_ + "/light/limit/set")
+  else if (command == "light/limit/set")
   {
     long milliamps = payload.toInt();
     if (milliamps >= LED_LIMIT_MIN_MILLIAMPS && milliamps <= LED_LIMIT_MAX_MILLIAMPS &&
@@ -955,7 +984,7 @@ void Iot::mqttMessageReceived_(String &topic, String &payload)
         mqtt_topic_prefix_ + "/light/limit",
         String(display_->getMaxMilliamps()), false /* retained */, 0 /* QoS */);
   }
-  else if (topic == mqtt_topic_prefix_ + "/light/effect/set")
+  else if (command == "light/effect/set")
   {
     // Animations play once, then the effect state goes back to the current
     // effect (see loop()).
@@ -982,7 +1011,7 @@ void Iot::mqttMessageReceived_(String &topic, String &payload)
         mqtt_topic_prefix_ + "/light/effect",
         Display::effectName(display_->getEffect()), false /* retained */, 0 /* QoS */);
   }
-  else if (topic == mqtt_topic_prefix_ + "/light/animation/set")
+  else if (command == "light/animation/set")
   {
     // Payload: an animation name, optionally followed by ",<seconds>".
     int comma = payload.indexOf(',');
@@ -999,7 +1028,7 @@ void Iot::mqttMessageReceived_(String &topic, String &payload)
       display_->playAnimation(Display::animationFromName(name), seconds * 1000);
     }
   }
-  else if (topic == mqtt_topic_prefix_ + "/light/notify/set")
+  else if (command == "light/notify/set")
   {
     // Payload: {"color": "R,G,B", "count": N}, both optional.
     JsonDocument doc;
@@ -1018,7 +1047,7 @@ void Iot::mqttMessageReceived_(String &topic, String &payload)
       display_->flash(color, count);
     }
   }
-  else if (topic == mqtt_topic_prefix_ + "/night/set")
+  else if (command == "night/set")
   {
     if (setNightFromJson_(payload))
     {
@@ -1030,7 +1059,7 @@ void Iot::mqttMessageReceived_(String &topic, String &payload)
     }
     publishNight_();
   }
-  else if (topic == mqtt_topic_prefix_ + "/discovery/set")
+  else if (command == "discovery/set")
   {
     bool enabled = payload == "ON";
     if (enabled || payload == "OFF")
@@ -1043,10 +1072,10 @@ void Iot::mqttMessageReceived_(String &topic, String &payload)
       publishDiscovery_(enabled);
     }
   }
-  else if (topic.startsWith(mqtt_topic_prefix_ + "/wled/") && topic.endsWith("/set"))
+  else if (command.startsWith("wled/") && command.endsWith("/set"))
   {
-    // wordclock/wled/<setting>/set with ON or OFF.
-    String setting = topic.substring(mqtt_topic_prefix_.length() + 6, topic.length() - 4);
+    // wled/<setting>/set with ON or OFF.
+    String setting = command.substring(5, command.length() - 4);
     bool enabled = payload == "ON";
     const char *key = setting == "realtime" ? PREFS_WLED_REALTIME_KEY
                       : setting == "sync"   ? PREFS_WLED_SYNC_KEY
@@ -1077,15 +1106,7 @@ void Iot::mqttMessageReceived_(String &topic, String &payload)
     }
     publishWled_();
   }
-  else if (topic == HA_STATUS_TOPIC)
-  {
-    // Home Assistant restarted: the configs are not retained, send them again.
-    if (payload == "online" && discovery_enabled_)
-    {
-      publishDiscovery_(true);
-    }
-  }
-  else if (topic == mqtt_topic_prefix_ + "/diag/log/get")
+  else if (command == "diag/log/get")
   {
     String log = eventLogText();
     int start = 0;
@@ -1096,7 +1117,7 @@ void Iot::mqttMessageReceived_(String &topic, String &payload)
       start = end + 1;
     }
   }
-  else if (topic == mqtt_topic_prefix_ + "/light/text/set")
+  else if (command == "light/text/set")
   {
     JsonDocument doc;
     DeserializationError error = deserializeJson(doc, payload);
@@ -1123,6 +1144,122 @@ void Iot::mqttMessageReceived_(String &topic, String &payload)
     String s = text;
     scrollText_(s, col, speed, rtl);
   }
+}
+
+bool Iot::checkAdminOr401_()
+{
+  if (iot_web_conf_.getState() == iotwebconf::OnLine &&
+      !web_server_.authenticate(IOTWEBCONF_ADMIN_USER_NAME, iot_web_conf_.getApPasswordParameter()->valueBuffer))
+  {
+    web_server_.requestAuthentication();
+    return false;
+  }
+  return true;
+}
+
+void Iot::handleState_()
+{
+  if (!checkAdminOr401_())
+  {
+    return;
+  }
+  static const char *const modeNames[] = {"boot", "clock", "matrix", "text", "animation", "stream"};
+  JsonDocument doc;
+  doc["version"] = AUTO_VERSION;
+  doc["name"] = iot_web_conf_.getThingName();
+  doc["uptime"] = uptimeSeconds();
+  doc["reset"] = resetReasonName();
+  doc["heap"] = ESP.getFreeHeap();
+  doc["heap_min"] = ESP.getMinFreeHeap();
+  doc["ssid"] = WiFi.SSID();
+  doc["rssi"] = WiFi.RSSI();
+  doc["ip"] = WiFi.localIP().toString();
+  doc["mac"] = WiFi.macAddress();
+  char text[20];
+  const DateTime now = rtc_->now();
+  snprintf(text, sizeof(text), "%04d-%02d-%02d %02d:%02d:%02d", now.year(), now.month(), now.day(), now.hour(), now.minute(), now.second());
+  doc["time"] = text;
+  doc["ntp"] = parseBooleanValue(ntp_enabled_value_);
+  doc["ntp_synced"] = (bool)ntp_synced;
+  if (!isnan(temperature_))
+  {
+    doc["temperature"] = round(temperature_ * 10) / 10;
+  }
+  doc["ldr"] = (int)display_->getRawSensorValue();
+  doc["mqtt"] = parseBooleanValue(mqtt_enabled_value_);
+  doc["mqtt_connected"] = mqtt_client_.connected();
+  doc["discovery"] = discovery_enabled_;
+  doc["api"] = parseBooleanValue(api_enabled_value_);
+
+  doc["on"] = display_->isOn();
+  HtmlColor(display_->getColor()).ToNumericalString(text, sizeof(text));
+  doc["color"] = text;
+  Display::Mode mode = display_->getMode();
+  doc["mode"] = mode <= Display::Mode::REALTIME ? modeNames[mode] : "";
+  doc["effect"] = Display::effectName(display_->getEffect());
+  JsonArray effects = doc["effects"].to<JsonArray>();
+  for (int effect = 0; effect < Display::EFFECT_COUNT; effect++)
+  {
+    effects.add(Display::effectName(static_cast<Display::Effect>(effect)));
+  }
+  JsonArray animations = doc["animations"].to<JsonArray>();
+  for (int animation = 0; animation < Display::ANIMATION_COUNT; animation++)
+  {
+    animations.add(Display::animationName(static_cast<Display::Animation>(animation)));
+  }
+  doc["limit"] = display_->getMaxMilliamps();
+  doc["limit_min"] = LED_LIMIT_MIN_MILLIAMPS;
+  doc["limit_max"] = LED_LIMIT_MAX_MILLIAMPS;
+
+  JsonObject night = doc["night"].to<JsonObject>();
+  night["enabled"] = night_.enabled;
+  snprintf(text, sizeof(text), "%02d:%02d", night_.start / 60, night_.start % 60);
+  night["start"] = text;
+  snprintf(text, sizeof(text), "%02d:%02d", night_.end / 60, night_.end % 60);
+  night["end"] = text;
+  String days;
+  for (int day = 0; day < 7; day++)
+  {
+    if (night_.days & (1 << day))
+    {
+      days += char('1' + day);
+    }
+  }
+  night["days"] = days;
+  night["brightness"] = night_.brightness;
+  night["active"] = night_active_;
+
+  JsonObject wled = doc["wled"].to<JsonObject>();
+  wled["realtime"] = wled_.realtimeEnabled();
+  wled["sync"] = wled_.syncEnabled();
+  wled["overlay"] = display_->realtimeOverlay();
+  wled["live"] = mode == Display::Mode::REALTIME;
+
+  if (web_server_.hasArg("log"))
+  {
+    doc["log"] = eventLogText();
+  }
+
+  String body;
+  serializeJson(doc, body);
+  web_server_.sendHeader("Cache-Control", "no-store");
+  web_server_.send(HTTP_OK, "application/json", body);
+}
+
+void Iot::handleControl_()
+{
+  if (!checkAdminOr401_())
+  {
+    return;
+  }
+  String command = web_server_.arg("cmd");
+  if (command.length() == 0 || command.length() > 32)
+  {
+    web_server_.send(400, "text/plain", "Missing command");
+    return;
+  }
+  handleCommand_(command, web_server_.arg("value"));
+  web_server_.send(HTTP_OK, "text/plain", "OK");
 }
 
 bool Iot::checkAPIEnabledOr403_()
@@ -1184,7 +1321,7 @@ void Iot::publishWled_()
   mqtt_client_.publish(mqtt_topic_prefix_ + "/wled/live", display_->getMode() == Display::Mode::REALTIME ? "ON" : "OFF", false /* retained */, 0 /* QoS */);
 }
 
-void Iot::setMatrixFromPayload_(String &payload) {
+void Iot::setMatrixFromPayload_(const String &payload) {
   if (payload.length() >= 110) {
     display_->setMatrix(Palette::stringToRgb(payload, display_->getColor()));
   } else {

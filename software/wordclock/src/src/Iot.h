@@ -99,8 +99,18 @@ private:
   bool setNightFromJson_(const String &payload);
   // Handles incoming MQTT messages.
   void mqttMessageReceived_(String &topic, String &payload);
+  // Runs a command, named after its MQTT topic without the prefix (such as
+  // "light/effect/set"). Shared by MQTT and the control panel of the page.
+  void handleCommand_(const String &command, const String &payload);
+  // Asks for the admin login of the configuration page when online, like
+  // IotWebConf does for it. Returns false when the request was answered.
+  bool checkAdminOr401_();
+  // Sends the state shown by the control panel of the page, as JSON.
+  void handleState_();
+  // Runs a command posted by the control panel of the page.
+  void handleControl_();
   // Updates the display with an arbitrary payload.
-  void setMatrixFromPayload_(String &payload);
+  void setMatrixFromPayload_(const String &payload);
   // Scrolls an arbirary text payload on the display.
   void scrollText_(String &text, RgbColor color, int speed, bool rightToLeft);
 
