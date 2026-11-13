@@ -16,6 +16,8 @@
 #include <RTClib.h>
 #include <esp_sntp.h>
 #include <time.h>
+#include <esp_task_wdt.h>
+#include <Update.h>
 #include "src/logging.h"
 #include "src/Display.h"
 #include "src/ClockFace.h"
@@ -50,6 +52,10 @@ Iot iot(&display, &rtc);
 // On October 31st the Halloween show plays at every full hour in this range.
 #define HALLOWEEN_FIRST_HOUR 18
 #define HALLOWEEN_LAST_HOUR 23
+// Restarts the clock when loop() hangs this long, in s. Well above the
+// longest normal blocking calls: an MQTT connect to a broker that is down
+// (~4 s) after a DNS lookup that can wait up to 15 s.
+#define LOOP_WATCHDOG_TIMEOUT_S 30
 
 #ifdef SDA_PIN
 #define RTC_SDA SDA_PIN
@@ -202,9 +208,16 @@ void setup()
 #endif
   bool result = rtc.begin(); // pins for RTC swapped over on V1.0
   DCHECK(result, "RTC didn't start");
-  if (rtc.lostPower())
+  if (!result)
   {
-    DCHECK("RTC lost power. Battery was removed ?");
+    eventLog("RTC not found");
+  }
+  else if (rtc.lostPower())
+  {
+    // The oscillator stopped while unpowered: the battery is flat or missing.
+    // NTP clears the flag when it next sets the RTC.
+    DLOGLN("RTC lost power. Battery was removed ?");
+    eventLog("RTC lost power, check its battery");
   }
   syncFromRTC();
   last_rtc_sync = millis();
@@ -213,10 +226,16 @@ void setup()
 
   display.setup();
   iot.setup();
+
+  esp_task_wdt_init(LOOP_WATCHDOG_TIMEOUT_S, true /* restart */);
+  esp_task_wdt_add(nullptr);
+  // A firmware upload runs inside a single loop() call.
+  Update.onProgress([](size_t, size_t) { esp_task_wdt_reset(); });
 }
 
 void loop()
 {
+  esp_task_wdt_reset();
   unsigned long ts_now = millis();
   if (iot.takeRtcChanged())
   {
@@ -248,4 +267,7 @@ void loop()
 
   display.loop();
   iot.loop();
+  // Gives the CPU a rest: the loop has nothing to do most of the time and
+  // running flat out heats the board, and the RTC temperature sensor with it.
+  delay(1);
 }

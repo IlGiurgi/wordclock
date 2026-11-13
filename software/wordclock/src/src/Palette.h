@@ -91,4 +91,12 @@ namespace Palette
 
     return colors;
   }
+
+  // Color of the first palette index in payload, defaultColor when payload is
+  // empty or not a palette index.
+  static RgbColor stringToFirstRgb(const String &payload, RgbColor defaultColor)
+  {
+    std::vector<RgbColor> colors = stringToRgb(payload.substring(0, CHARS_PER_COLOR), defaultColor);
+    return colors.empty() ? defaultColor : colors[0];
+  }
 }

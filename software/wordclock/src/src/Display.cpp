@@ -1001,15 +1001,19 @@ void Display::_drawAnimation(Animation animation, unsigned long elapsedMs)
 
 void Display::updateForTime(int hour, int minute, int second, int animationSpeed)
 {
-  // In overlay mode the stream follows the time, so it is kept up to date.
-  bool overlay = _mode == REALTIME && _realtimeOverlay;
-  if ((_mode != CLOCK && !overlay) || !_clockFace->stateForTime(hour, minute, second, _show_ampm))
+  // The state follows the time in every mode, so returning to the clock
+  // fades once to the right time instead of to the time the clock left at.
+  if (!_clockFace->stateForTime(hour, minute, second, _show_ampm))
   {
     return; // Nothing to update.
   }
-  if (overlay)
+  if (_mode == REALTIME && _realtimeOverlay)
   {
-    _drawRealtime();
+    _drawRealtime(); // The stream follows the time.
+    return;
+  }
+  if (_mode != CLOCK)
+  {
     return;
   }
 

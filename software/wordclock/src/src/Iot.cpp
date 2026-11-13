@@ -160,10 +160,10 @@ namespace
   // returns the parsed value. If it fails, returns `default_value`.
   RgbColor parseColorValue(const char *str, const RgbColor &default_value)
   {
-    bool has_error = str[0] != '#' || str[7] != 0;
-    for (int i = 1; i <= 6; i++)
+    bool has_error = strlen(str) != 7 || str[0] != '#';
+    for (int i = 1; i <= 6 && !has_error; i++)
     {
-      has_error &= !isxdigit(str[i]);
+      has_error |= !isxdigit(str[i]);
     }
     if (has_error)
     {
@@ -462,7 +462,7 @@ void Iot::setup()
 
   web_server_.on(UriBraces("/api/text/set/{}"), [this]() {
     if (checkAPIEnabledOr403_()) {
-      RgbColor textColor = web_server_.arg("color") != nullptr ? Palette::stringToRgb(web_server_.arg("color").substring(0,1), display_->getColor()).at(0) : display_->getColor();
+      RgbColor textColor = web_server_.arg("color") != nullptr ? Palette::stringToFirstRgb(web_server_.arg("color"), display_->getColor()) : display_->getColor();
       int scrollSpeed =  web_server_.arg("delay") != nullptr ? web_server_.arg("delay").toInt() : 150;
       bool rtl = web_server_.arg("rtl") != nullptr;
       String payload = web_server_.urlDecode(web_server_.pathArg(0));
@@ -922,7 +922,8 @@ bool Iot::mqttStringToRgb_(String payload, RgbColor *color)
     return false;
   }
   tokens[2] = payload.toInt();
-  *color = RgbColor(tokens[0], tokens[1], tokens[2]);
+  // RgbColor keeps only the low byte: 300 would become 44.
+  *color = RgbColor(constrain(tokens[0], 0, 255), constrain(tokens[1], 0, 255), constrain(tokens[2], 0, 255));
   return true;
 }
 
@@ -1132,10 +1133,8 @@ void Iot::handleCommand_(const String &command, const String &payload)
       return;
     }
     const char *color = doc["color"];
-    RgbColor col = display_->getColor();
-    if (color != nullptr) {
-      col = Palette::stringToRgb(String(color), display_->getColor()).at(0);
-    }
+    RgbColor col = color != nullptr ? Palette::stringToFirstRgb(String(color), display_->getColor())
+                                    : display_->getColor();
     int speed = doc["delay"];
     if (speed == 0) {
       speed = 200;
